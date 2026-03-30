@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar'
 import JsonTree from '../components/JsonTree'
 import { useAzureScope } from '../hooks/useAzureScope'
 import { useDriftSocket } from '../hooks/useDriftSocket'
-import { fetchResourceConfiguration, stopMonitoring } from '../services/api'
+import { fetchResourceConfiguration, stopMonitoring, fetchPolicyCompliance } from '../services/api'
 import './DashboardPage.css'
 import { useDashboard } from '../context/DashboardContext'
 
@@ -88,6 +88,7 @@ export default function DashboardPage() {
     configData,    setConfigData,
     liveEvents,    setLiveEvents,
     scanProgress,  setScanProgress,
+    policyData,    setPolicyData,
     scanInterval,  monitorScope,  jsonTreeRef,
   } = useDashboard()
 
@@ -165,6 +166,9 @@ export default function DashboardPage() {
             if (cfg) {
               setIsSubmitted(true)
               setConfigData(cfg)
+              // Fetch policy compliance in parallel
+              fetchPolicyCompliance(subscription, resourceGroup, resource || null)
+                .then(p => setPolicyData(p)).catch(() => setPolicyData(null))
               // Start real-time monitoring after config loads
               if (!isDemoMode) {
                 monitorScope.current = { subscriptionId: subscription, resourceGroupId: resourceGroup, resourceId: resource || null }
@@ -209,6 +213,7 @@ export default function DashboardPage() {
     setConfigData(null)
     setLiveEvents([])
     setScanProgress(0)
+    setPolicyData(null)
     clearDriftEvents()
   }
 
@@ -403,6 +408,16 @@ export default function DashboardPage() {
                   <div className="stat-number" style={{ fontSize: 12 }}>{statsRegion}</div>
                   <div className="stat-label">Region</div>
                 </div>
+                {policyData && (
+                  <div className={`stat-card ${policyData.nonCompliant > 0 ? 'stat-danger' : 'stat-success'}`}
+                    title={policyData.nonCompliant > 0 ? `${policyData.nonCompliant} policy violation(s)` : 'All policies compliant'}
+                  >
+                    <div className="stat-number" style={{ fontSize: 12 }}>
+                      {policyData.summary === 'no-policies' ? '—' : policyData.nonCompliant > 0 ? `${policyData.nonCompliant} ✗` : '✓'}
+                    </div>
+                    <div className="stat-label">Policy</div>
+                  </div>
+                )}
               </div>
             )}
           </aside>

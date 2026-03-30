@@ -250,3 +250,13 @@ export async function seedBaseline(subscriptionId, resourceGroupId, resourceId) 
     body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
   })
 }
+
+// ============================
+// Policy Compliance
+// ============================
+
+export async function fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId = null) {
+  const params = new URLSearchParams({ subscriptionId, resourceGroupId })
+  if (resourceId) params.set('resourceId', resourceId)
+  return apiRequest(`/policy/compliance?${params}`)
+}

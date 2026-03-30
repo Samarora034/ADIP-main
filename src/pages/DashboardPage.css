@@ -789,3 +789,5 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+.stat-danger { background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.2); }
+.stat-danger .stat-number { color: #ef4444; }

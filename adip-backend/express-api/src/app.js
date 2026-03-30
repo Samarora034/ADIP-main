@@ -32,6 +32,7 @@ app.use('/api', require('./routes/baseline'))
 app.use('/api', require('./routes/compare'))
 app.use('/api', require('./routes/remediate'))
 app.use('/api', require('./routes/seed'))
+app.use('/api', require('./routes/policy'))
 
 // SignalR webhook — Function App posts drift events here
 app.post('/internal/drift-event', express.json(), (req, res) => {

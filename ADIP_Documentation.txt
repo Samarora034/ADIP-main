@@ -749,3 +749,135 @@ Logic App                   adip-logic-app      Microsoft.Logic/workflows
 END OF DOCUMENT
 Azure Drift Intelligence Platform — Technical Documentation v1.0
 ================================================================================
+
+
+
+
+date - 30/3/26 Update
+
+
+Task 1 — Dynamic API Versioning (azureResourceService.js + detectDrift/index.js)
+- Added API_VERSION_MAP dictionary covering 15+ resource types (workflows, sites, vaults, VMs, VNets, etc.)
+- Falls back to ARM provider metadata lookup (client.providers.get()) for any type not in the map, with results cached
+- Function App also updated with the same map — redeployed ✅
+
+Task 2 — Deduplication (queuePoller.js)
+- Added dedupCache — an in-memory map of resourceId:operationName → lastBroadcastTimestamp
+- Events within 5 seconds of an identical previous event are dropped from the feed but still deleted from the queue (so they don't
+reappear)
+- Cache auto-prunes entries older than 10 seconds when it exceeds 100 keys
+
+Task 3 — Gate feed behind Submit (useDriftSocket.js)
+- Added isSubmittedRef — a ref that mirrors the isSubmitted state
+- resourceChange handler returns early if isSubmittedRef.current === false
+- isSubmitted is set to false on Submit start, true only after config loads successfully
+
+Task 4 — Live config updates (useDriftSocket.js + DashboardPage.jsx)
+- useDriftSocket now accepts onConfigUpdate callback
+- When a resourceChange event arrives, it calls onConfigUpdate(event)
+- handleConfigUpdate in DashboardPage merges event.liveState into configData — updates the matching resource in the JSON tree
+instantly
+
+Task 5 — Full Stop reset (DashboardPage.jsx)
+- handleStop now resets: configData → null, liveEvents → [], scanProgress → 0, isSubmitted → false, isMonitoring → false,
+clearDriftEvents()
+- Everything returns to blank state — ready for a fresh resource selection
+
+
+
+
+
+
+
+feature 1 and auto remediation and compliance
+
+ ## How Auto-Remediation Works
+
+When you click "Remediate to Baseline", this is the exact sequence:
+
+Frontend click
+  → POST /api/remediate  { subscriptionId, resourceGroupId, resourceId }
+    → Express API (remediate.js)
+      1. Fetches golden baseline from Cosmos DB (baselines container, active=true)
+      2. Fetches current live config from ARM API
+      3. Computes diff (what changed)
+      4. Calls ARM PUT with the baseline config
+         → Azure Resource Manager applies the change to the actual resource
+      5. Returns { remediated: true, changeCount, appliedBaseline, previousLiveState }
+    → Frontend shows success panel with field-level diff
+
+
+The ARM PUT call (beginCreateOrUpdateAndWait) is a real write operation to Azure — it literally changes the resource's configuration
+in your Azure account to match the stored baseline. For example if TLS was changed from 1.2 to 1.0, it PUTs minimumTlsVersion: TLS1_2
+back.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## Severity Classification Criteria
+
+Here's the exact logic from classifySeverity():
+Reading file: /mnt/c/Users/SakshamMidha/OneDrive - CloudThat/Desktop/ADIP-main/adip-backend/express-api/src/routes/compare.js, from line 1 to 30 (using tool: read)
+ ✓ Successfully read 1361 bytes from /mnt/c/Users/SakshamMidha/OneDrive - CloudThat/Desktop/ADIP-main/adip-backend/express-api/src/routes/compare.js
+ - Completed in 0.13s
+
+> Here's the full breakdown:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### CRITICAL
+Condition: Any field was deleted (kind === 'D' in deep-diff)
+
+Examples:
+- An entire networkAcls block was removed
+- A firewall rule was deleted
+- An access policy entry was removed from Key Vault
+- An encryption config block was deleted entirely
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### HIGH
+Condition: A change occurred on a security-sensitive path
+
+The exact paths checked:
+| Path | What it protects |
+|---|---|
+| properties.networkAcls | Storage/Cosmos DB firewall rules |
+| properties.accessPolicies | Key Vault access permissions |
+| properties.securityRules | NSG inbound/outbound rules |
+| sku | Pricing tier / redundancy level |
+| location | Azure region |
+| identity | Managed Identity configuration |
+| properties.encryption | Encryption at rest settings |
+
+Examples: TLS version changed, public network access toggled, encryption key source changed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### MEDIUM
+Condition: More than 5 fields changed (but none are security-sensitive)
+
+Examples: Multiple tags changed, several app settings modified, multiple config properties updated at once
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### LOW
+Condition: Everything else — 1–5 non-security fields changed
+
+Examples: A single tag updated, a display name changed, a description modified
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### NONE
+Condition: Zero differences found — resource matches baseline exactly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+The classification runs in priority order — CRITICAL is checked first, so even if 10 fields changed, if one was deleted it's CRITICAL
+regardless of the count.

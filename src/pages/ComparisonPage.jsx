@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { diff as deepDiff } from 'deep-diff'
 import Sidebar from '../components/Sidebar'
 import JsonTree from '../components/JsonTree'
-import { fetchBaseline, remediateToBaseline } from '../services/api'
+import { fetchBaseline, remediateToBaseline, fetchPolicyCompliance } from '../services/api'
 import './ComparisonPage.css'
 
 // ── Severity classifier ────────────────────────────────────────────────────
@@ -73,6 +73,7 @@ export default function ComparisonPage() {
   const [remediated,     setRemediated]     = useState(false)
   const [remediateErr,   setRemediateErr]   = useState(null)
   const [remediateDiff,  setRemediateDiff]  = useState(null)
+  const [policyData,     setPolicyData]     = useState(null)
 
   const baselineTreeRef = useRef(null)
   const liveTreeRef     = useRef(null)
@@ -82,6 +83,8 @@ export default function ComparisonPage() {
     if (!subscriptionId) return
     const load = async () => {
       setLoading(true)
+      // Fetch baseline and policy compliance in parallel
+      fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId).then(setPolicyData).catch(() => {})
       try {
         const data = await fetchBaseline(subscriptionId, resourceId)
         if (data?.resourceState) {
@@ -176,6 +179,12 @@ export default function ComparisonPage() {
             {severity && (
               <span className={`severity-badge severity-badge--${severity}`}>
                 {severity.toUpperCase()}
+              </span>
+            )}
+            {policyData && policyData.summary !== 'no-policies' && (
+              <span className={`severity-badge severity-badge--${policyData.nonCompliant > 0 ? 'critical' : 'none'}`}
+                title={policyData.nonCompliant > 0 ? `${policyData.nonCompliant} policy violation(s)` : 'Policy compliant'}>
+                {policyData.nonCompliant > 0 ? `POLICY: ${policyData.nonCompliant} VIOLATION(S)` : 'POLICY: COMPLIANT'}
               </span>
             )}
             {differences.length > 0 && !noBaseline && (
