@@ -1,0 +1,84 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "EventGrid_HTTP_Trigger": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id":        { "type": "string" },
+                "eventType": { "type": "string" },
+                "subject":   { "type": "string" },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "resourceUri":    { "type": "string" },
+                    "subscriptionId": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "Handle_Validation": {
+        "type": "If",
+        "expression": {
+          "and": [{
+            "equals": [
+              "@triggerBody()?[0]?['eventType']",
+              "Microsoft.EventGrid.SubscriptionValidationEvent"
+            ]
+          }]
+        },
+        "actions": {
+          "Return_Validation_Response": {
+            "type": "Response",
+            "inputs": {
+              "statusCode": 200,
+              "body": {
+                "validationResponse": "@triggerBody()?[0]?['data']?['validationCode']"
+              }
+            },
+            "runAfter": {}
+          }
+        },
+        "else": {
+          "actions": {
+            "Call_DetectDrift_Function": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "https://adip-func-001.azurewebsites.net/api/detectDrift?code=YOUR_FUNCTION_KEY",
+                "headers": { "Content-Type": "application/json" },
+                "body": {
+                  "resourceId":     "@triggerBody()?[0]?['data']?['resourceUri']",
+                  "subscriptionId": "@triggerBody()?[0]?['data']?['subscriptionId']"
+                }
+              },
+              "runAfter": {}
+            },
+            "Return_Success": {
+              "type": "Response",
+              "inputs": {
+                "statusCode": 200,
+                "body": "@body('Call_DetectDrift_Function')"
+              },
+              "runAfter": { "Call_DetectDrift_Function": ["Succeeded"] }
+            }
+          }
+        },
+        "runAfter": {}
+      }
+    }
+  },
+  "parameters": {}
+}

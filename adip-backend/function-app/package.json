@@ -1,0 +1,13 @@
+{
+  "name": "adip-function-app",
+  "version": "1.0.0",
+  "scripts": { "start": "func start" },
+  "dependencies": {
+    "@azure/arm-resources": "^5.2.0",
+    "@azure/cosmos": "^4.0.0",
+    "@azure/identity": "^4.0.0",
+    "deep-diff": "^1.0.2",
+    "dotenv": "^16.0.0",
+    "node-fetch": "^2.7.0"
+  }
+}

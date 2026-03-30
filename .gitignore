@@ -1,0 +1,21 @@
+# Environment files — never commit secrets
+.env
+.env.*
+*.env
+*.local
+adip-backend/express-api/.env
+adip-backend/function-app/.env
+
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
