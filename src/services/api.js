@@ -233,6 +233,13 @@ export async function startMonitoring(subscriptionId, resourceGroupId, resourceI
   })
 }
 
+export async function cacheState(resourceId, state) {
+  return apiRequest('/cache-state', {
+    method: 'POST',
+    body: JSON.stringify({ resourceId, state }),
+  })
+}
+
 export async function stopMonitoring(subscriptionId, resourceGroupId, resourceId = null) {
   return apiRequest('/monitor/stop', {
     method: 'POST',

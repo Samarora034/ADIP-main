@@ -1,6 +1,5 @@
 # Environment files — never commit secrets
 .env
-.env.*
 *.env
 *.local
 adip-backend/express-api/.env

@@ -42,6 +42,23 @@ app.post('/api/alert/email', express.json(), async (req, res) => {
   res.json({ sent: true })
 })
 
+// Task 1: seed the live state cache so the next change event has a "previous" state
+// Called by frontend immediately after config is loaded on Submit
+app.post('/api/cache-state', express.json(), (req, res) => {
+  const { resourceId, state } = req.body
+  if (!resourceId || !state) return res.status(400).json({ error: 'resourceId and state required' })
+  const { liveStateCache } = require('./services/queuePoller')
+  const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag']
+  function strip(obj) {
+    if (Array.isArray(obj)) return obj.map(strip)
+    if (obj && typeof obj === 'object')
+      return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)]))
+    return obj
+  }
+  liveStateCache[resourceId] = strip(state)
+  res.json({ cached: true, resourceId })
+})
+
 // SignalR webhook — Function App posts drift events here
 app.post('/internal/drift-event', express.json(), (req, res) => {
   const event = req.body

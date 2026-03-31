@@ -1,7 +1,10 @@
 {
   "name": "adip-function-app",
   "version": "1.0.0",
-  "scripts": { "start": "func start" },
+  "scripts": {
+    "start": "func start",
+    "deploy": "func azure functionapp publish adip-func-001 --javascript"
+  },
   "dependencies": {
     "@azure/arm-resources": "^5.2.0",
     "@azure/cosmos": "^4.0.0",

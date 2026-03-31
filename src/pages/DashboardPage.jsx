@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar'
 import JsonTree from '../components/JsonTree'
 import { useAzureScope } from '../hooks/useAzureScope'
 import { useDriftSocket } from '../hooks/useDriftSocket'
-import { fetchResourceConfiguration, stopMonitoring, fetchPolicyCompliance } from '../services/api'
+import { fetchResourceConfiguration, stopMonitoring, fetchPolicyCompliance, cacheState } from '../services/api'
 import './DashboardPage.css'
 import { useDashboard } from '../context/DashboardContext'
 
@@ -169,6 +169,13 @@ export default function DashboardPage() {
               // Fetch policy compliance in parallel
               fetchPolicyCompliance(subscription, resourceGroup, resource || null)
                 .then(p => setPolicyData(p)).catch(() => setPolicyData(null))
+              // Task 1: seed backend live state cache so first change shows a diff
+              if (!isDemoMode && cfg) {
+                const toCache = cfg.resources
+                  ? cfg.resources.filter(r => r.id)
+                  : (cfg.id ? [cfg] : [])
+                toCache.forEach(r => cacheState(r.id, r).catch(() => {}))
+              }
               // Start real-time monitoring after config loads
               if (!isDemoMode) {
                 monitorScope.current = { subscriptionId: subscription, resourceGroupId: resourceGroup, resourceId: resource || null }
@@ -519,29 +526,55 @@ export default function DashboardPage() {
                     <span>Live resource changes</span>
                   </div>
                 )}
-                {driftEvents.map(ev => (
-                  <div key={ev._clientId} className="log-entry log-entry-connect">
-                    <span className="log-time">{ev._receivedAt}</span>
-                    <span className="log-icon">
-                      {ev.eventType?.includes('Delete')
-                        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                      }
-                    </span>
-                    <span className="log-message">
-                      <strong style={{ color: ev.eventType?.includes('Delete') ? '#ef4444' : '#f59e0b' }}>
-                        {ev.eventType?.includes('Delete') ? 'DELETED' : 'MODIFIED'}
-                      </strong>
-                      {' — '}
-                      <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                        {ev.resourceId?.split('/').pop() ?? ev.subject}
-                      </span>
-                      {ev.caller && ev.caller !== 'unknown' && (
-                        <span style={{ color: 'var(--ct-grey-400)', marginLeft: 6 }}>by {ev.caller}</span>
+                {driftEvents.map(ev => {
+                  const user         = ev.caller && ev.caller !== 'unknown' ? ev.caller : 'Unknown user'
+                  const resourceName = ev.resourceId?.split('/').pop() ?? ev.subject ?? 'resource'
+                  const isDelete     = ev.eventType?.includes('Delete')
+                  // Task 3: format Azure eventTime, not frontend render time
+                  const azureTime    = ev.eventTime
+                    ? new Date(ev.eventTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    : ev._receivedAt
+
+                  return (
+                    <div key={ev._clientId} className="log-entry log-entry-connect" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
+                      {/* Header line */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="log-time">{azureTime}</span>
+                        <span className="log-icon">
+                          {isDelete
+                            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          }
+                        </span>
+                        <span className="log-message" style={{ fontSize: 12 }}>
+                          <strong style={{ color: '#e2e8f0' }}>{user}</strong>
+                          <span style={{ color: 'var(--ct-grey-400)' }}> {isDelete ? 'deleted' : 'modified'} </span>
+                          <strong style={{ color: '#93c5fd', fontFamily: 'monospace' }}>{resourceName}</strong>
+                          {ev.changes?.length > 0 && (
+                            <span style={{ color: 'var(--ct-grey-400)' }}> · {ev.changes.length} change{ev.changes.length > 1 ? 's' : ''}</span>
+                          )}
+                        </span>
+                      </div>
+                      {/* Per-field human-readable sentences */}
+                      {ev.changes?.length > 0 && (
+                        <div style={{ paddingLeft: 34 }}>
+                          {ev.changes.slice(0, 5).map((c, i) => (
+                            <div key={i} style={{ fontSize: 11, color: '#94a3b8', marginBottom: 1 }}>
+                              <span style={{ color: '#64748b', marginRight: 4 }}>↳</span>
+                              <strong style={{ color: '#e2e8f0' }}>{user}</strong>{' '}
+                              {c.sentence || `${c.type} ${c.label || c.path}`}
+                            </div>
+                          ))}
+                          {ev.changes.length > 5 && (
+                            <div style={{ fontSize: 11, color: '#64748b' }}>↳ +{ev.changes.length - 5} more changes</div>
+                          )}
+                        </div>
                       )}
-                    </span>
-                  </div>
-                ))}
+
+
+                    </div>
+                  )
+                })}
               </div>
             </section>
           </main>

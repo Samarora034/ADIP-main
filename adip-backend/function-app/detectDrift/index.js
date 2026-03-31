@@ -48,12 +48,17 @@ module.exports = async function (context, req) {
     const credential = new DefaultAzureCredential()
     const armClient = new ResourceManagementClient(credential, subscriptionId)
 
-    // Parse resource ID parts
-    const parts = resourceId.split('/')
-    const resourceGroupName = parts[4]
-    const provider = parts[6]
-    const type     = parts[7]
-    const name     = parts[8]
+    // Dynamically parse ARM resource ID — works for any RG in the subscription
+    // /subscriptions/{sub}/resourceGroups/{rg}/providers/{ns}/{type}/{name}
+    const parts             = resourceId.split('/')
+    const resourceGroupName = parts[4] || ''
+    const provider          = parts[6] || ''
+    const type              = parts[7] || ''
+    const name              = parts[8] || ''
+    if (!resourceGroupName || !provider || !type || !name) {
+      context.res = { status: 400, body: { error: 'Invalid resourceId: ' + resourceId } }
+      return
+    }
 
     // Dynamic API version map — avoids 500 errors for non-storage resource types
     const API_VERSION_MAP = {

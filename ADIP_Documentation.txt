@@ -3,7 +3,24 @@
         Technical Project Documentation
         Version 1.0 | March 2026
 ================================================================================
+For someone setting up from scratch, the complete flow is:
+bash
+git clone <repo>
 
+# Install everything
+npm install
+cd adip-backend/express-api && npm install
+cd ../function-app && npm install
+
+# Configure
+cp .env.example .env                                          # frontend
+cp adip-backend/express-api/.env.example adip-backend/express-api/.env
+cp adip-backend/function-app/.env.example adip-backend/function-app/.env
+# → fill in Azure values in each .env
+
+# Run
+cd adip-backend/express-api && npm start   # Terminal 1
+cd ADIP-main && npm run dev                # Terminal 2
 ================================================================================
 1. EXECUTIVE SUMMARY
 ================================================================================
