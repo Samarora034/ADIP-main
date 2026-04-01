@@ -34,6 +34,7 @@ app.use('/api', require('./routes/compare'))
 app.use('/api', require('./routes/remediate'))
 app.use('/api', require('./routes/seed'))
 app.use('/api', require('./routes/policy'))
+app.use('/api', require('./routes/remediateDecision'))
 
 // Alert email endpoint — called by Logic App or directly
 app.post('/api/alert/email', express.json(), async (req, res) => {

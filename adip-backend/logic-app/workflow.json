@@ -19,7 +19,9 @@
                   "type": "object",
                   "properties": {
                     "resourceUri":    { "type": "string" },
-                    "subscriptionId": { "type": "string" }
+                    "subscriptionId": { "type": "string" },
+                    "operationName":  { "type": "string" },
+                    "status":         { "type": "string" }
                   }
                 }
               }
@@ -32,47 +34,73 @@
       "Handle_Validation": {
         "type": "If",
         "expression": {
-          "and": [{
-            "equals": [
-              "@triggerBody()?[0]?['eventType']",
-              "Microsoft.EventGrid.SubscriptionValidationEvent"
-            ]
-          }]
+          "and": [{ "equals": ["@triggerBody()?[0]?['eventType']", "Microsoft.EventGrid.SubscriptionValidationEvent"] }]
         },
         "actions": {
-          "Return_Validation_Response": {
+          "Return_Validation": {
             "type": "Response",
-            "inputs": {
-              "statusCode": 200,
-              "body": {
-                "validationResponse": "@triggerBody()?[0]?['data']?['validationCode']"
-              }
-            },
+            "inputs": { "statusCode": 200, "body": { "validationResponse": "@triggerBody()?[0]?['data']?['validationCode']" } },
             "runAfter": {}
           }
         },
         "else": {
           "actions": {
-            "Call_DetectDrift_Function": {
-              "type": "Http",
-              "inputs": {
-                "method": "POST",
-                "uri": "https://adip-func-001.azurewebsites.net/api/detectDrift?code=YOUR_FUNCTION_KEY",
-                "headers": { "Content-Type": "application/json" },
-                "body": {
-                  "resourceId":     "@triggerBody()?[0]?['data']?['resourceUri']",
-                  "subscriptionId": "@triggerBody()?[0]?['data']?['subscriptionId']"
+            "Filter_Cheap_Check": {
+              "type": "If",
+              "expression": {
+                "and": [
+                  {
+                    "not": {
+                      "equals": ["@triggerBody()?[0]?['data']?['status']", "Failed"]
+                    }
+                  },
+                  {
+                    "not": {
+                      "contains": ["@{triggerBody()?[0]?['data']?['operationName']}", "read"]
+                    }
+                  },
+                  {
+                    "not": {
+                      "contains": ["@{triggerBody()?[0]?['data']?['operationName']}", "list"]
+                    }
+                  },
+                  {
+                    "not": {
+                      "contains": ["@{toLower(triggerBody()?[0]?['data']?['resourceUri'])}", "/deployments/"]
+                    }
+                  }
+                ]
+              },
+              "actions": {
+                "Call_DetectDrift_Function": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "https://adip-func-001.azurewebsites.net/api/detectDrift?code=YOUR_FUNCTION_KEY",
+                    "headers": { "Content-Type": "application/json" },
+                    "body": {
+                      "resourceId":     "@triggerBody()?[0]?['data']?['resourceUri']",
+                      "subscriptionId": "@triggerBody()?[0]?['data']?['subscriptionId']"
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Return_Success": {
+                  "type": "Response",
+                  "inputs": { "statusCode": 200, "body": "@body('Call_DetectDrift_Function')" },
+                  "runAfter": { "Call_DetectDrift_Function": ["Succeeded", "Failed"] }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Return_Filtered": {
+                    "type": "Response",
+                    "inputs": { "statusCode": 200, "body": { "skipped": true, "reason": "filtered by Logic App" } },
+                    "runAfter": {}
+                  }
                 }
               },
               "runAfter": {}
-            },
-            "Return_Success": {
-              "type": "Response",
-              "inputs": {
-                "statusCode": 200,
-                "body": "@body('Call_DetectDrift_Function')"
-              },
-              "runAfter": { "Call_DetectDrift_Function": ["Succeeded"] }
             }
           }
         },

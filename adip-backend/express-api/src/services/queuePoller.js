@@ -1,6 +1,5 @@
 const { QueueServiceClient } = require('@azure/storage-queue')
 const { getResourceConfig }  = require('./azureResourceService')
-const { diff }               = require('deep-diff')
 
 let queueClient = null
 
@@ -50,59 +49,62 @@ function strip(obj) {
   return obj
 }
 
-// Task 2: produce clean field label from a dot-path
-function friendlyLabel(path) {
-  // e.g. "properties → accessTier" → "access tier"
-  //      "tags → environment"       → "tag 'environment'"
-  const parts = path.split(' → ')
-  const last  = parts[parts.length - 1]
-  const isTag = parts.includes('tags')
-  if (isTag) return `tag '${last}'`
-  // camelCase → words
-  return last.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toLowerCase()).trim()
+// Hardened recursive diff engine — handles nested objects, arrays, null transitions
+function safeStr(val) {
+  if (val === null || val === undefined) return 'null'
+  if (typeof val === 'object') return JSON.stringify(val)
+  return String(val)
 }
 
-// Task 2: format diff into human-readable sentences
-function formatDiff(differences) {
-  if (!differences?.length) return []
-  return differences.map(d => {
-    const path  = d.path?.join(' → ') ?? '(root)'
-    const label = friendlyLabel(path)
-    const isTag = path.includes('tags')
-    switch (d.kind) {
-      case 'E': return {
-        path, type: 'modified',
-        label,
-        oldValue: d.lhs, newValue: d.rhs,
-        sentence: isTag
-          ? `changed ${label} from "${d.lhs}" to "${d.rhs}"`
-          : `changed ${label} from "${d.lhs}" to "${d.rhs}"`,
+function computeDiff(prev, curr, path, results) {
+  if (prev === null || prev === undefined) {
+    if (curr !== null && curr !== undefined) {
+      if (typeof curr === 'object' && !Array.isArray(curr)) {
+        for (const k of Object.keys(curr)) computeDiff(undefined, curr[k], `${path} → ${k}`, results)
+      } else {
+        const field = path.split(' → ').pop()
+        const isTag = path.includes('tags')
+        results.push({ path, type: 'added', oldValue: null, newValue: curr,
+          sentence: isTag ? `added tag '${field}' = "${curr}"` : `added "${field}" = ${safeStr(curr)}` })
       }
-      case 'N': return {
-        path, type: 'added',
-        label,
-        oldValue: null, newValue: d.rhs,
-        sentence: isTag
-          ? `added ${label} = "${d.rhs}"`
-          : `added ${label} = "${JSON.stringify(d.rhs)}"`,
-      }
-      case 'D': return {
-        path, type: 'removed',
-        label,
-        oldValue: d.lhs, newValue: null,
-        sentence: isTag
-          ? `deleted ${label}`
-          : `removed ${label} (was "${JSON.stringify(d.lhs)}")`,
-      }
-      case 'A': return {
-        path: `${path}[${d.index}]`, type: 'array',
-        label,
-        oldValue: d.item?.lhs, newValue: d.item?.rhs,
-        sentence: `modified ${label} array`,
-      }
-      default: return null
     }
-  }).filter(Boolean)
+    return
+  }
+  if (curr === null || curr === undefined) {
+    const field = path.split(' → ').pop()
+    const isTag = path.includes('tags')
+    results.push({ path, type: 'removed', oldValue: prev, newValue: null,
+      sentence: isTag ? `deleted tag '${field}'` : `removed "${field}" (was ${safeStr(prev)})` })
+    return
+  }
+  if (Array.isArray(prev) && Array.isArray(curr)) {
+    if (JSON.stringify(prev) !== JSON.stringify(curr)) {
+      const added   = curr.filter(c => !prev.some(p => JSON.stringify(p) === JSON.stringify(c)))
+      const removed = prev.filter(p => !curr.some(c => JSON.stringify(c) === JSON.stringify(p)))
+      const field   = path.split(' → ').pop()
+      if (added.length)   results.push({ path, type: 'array-added',   oldValue: prev, newValue: curr, sentence: `added ${added.length} item(s) to "${field}"` })
+      if (removed.length) results.push({ path, type: 'array-removed', oldValue: prev, newValue: curr, sentence: `removed ${removed.length} item(s) from "${field}"` })
+      if (!added.length && !removed.length) results.push({ path, type: 'array-reordered', oldValue: prev, newValue: curr, sentence: `reordered items in "${field}"` })
+    }
+    return
+  }
+  if (typeof prev === 'object' && typeof curr === 'object') {
+    const allKeys = new Set([...Object.keys(prev), ...Object.keys(curr)])
+    for (const k of allKeys) computeDiff(prev[k], curr[k], path ? `${path} → ${k}` : k, results)
+    return
+  }
+  if (prev !== curr) {
+    const field = path.split(' → ').pop()
+    const isTag = path.includes('tags')
+    results.push({ path, type: 'modified', oldValue: prev, newValue: curr,
+      sentence: isTag ? `changed tag '${field}' from "${prev}" to "${curr}"` : `changed "${field}" from "${safeStr(prev)}" to "${safeStr(curr)}"` })
+  }
+}
+
+function formatDiff(prev, curr) {
+  const results = []
+  computeDiff(prev, curr, '', results)
+  return results.filter(r => r.path !== '')
 }
 
 // Task 1: in-memory cache of last known live state per resourceId
@@ -115,8 +117,7 @@ async function enrichWithDiff(event) {
     const liveRaw  = await getResourceConfig(event.subscriptionId, event.resourceGroup, event.resourceId)
     const current  = strip(liveRaw)
     const previous = liveStateCache[event.resourceId] || null
-    const rawDiff  = previous ? (diff(previous, current) || []) : []
-    const changes  = formatDiff(rawDiff)
+    const changes  = previous ? formatDiff(previous, current) : []
 
     // Always update cache after fetching
     liveStateCache[event.resourceId] = current
