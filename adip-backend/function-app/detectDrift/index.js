@@ -1,4 +1,4 @@
-require('dotenv').config()
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../../.env') })
 const { ResourceManagementClient } = require('@azure/arm-resources')
 const { DefaultAzureCredential }   = require('@azure/identity')
 const { BlobServiceClient } = require('@azure/storage-blob')

@@ -4,9 +4,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "setup":        "npm run install:all && npm run env:sync",
+    "install:all":  "npm install && npm install --prefix adip-backend/express-api && npm install --prefix adip-backend/function-app",
+    "env:sync":     "node scripts/sync-env.cjs",
+    "dev":          "vite",
+    "dev:api":      "npm start --prefix adip-backend/express-api",
+    "build":        "vite build",
+    "preview":      "vite preview",
+    "deploy:func":  "npm run deploy --prefix adip-backend/function-app"
   },
   "dependencies": {
     "deep-diff": "^1.0.2",
