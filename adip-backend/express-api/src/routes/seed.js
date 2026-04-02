@@ -1,5 +1,5 @@
 const router = require('express').Router()
-const { saveBaseline } = require('../services/cosmosService')
+const { saveBaseline } = require('../services/blobService')
 
 const DUMMY_BASELINE = {
   name: 'adipstore001',

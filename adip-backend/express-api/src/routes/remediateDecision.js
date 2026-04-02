@@ -1,5 +1,5 @@
 const router = require('express').Router()
-const { getBaseline, saveBaseline } = require('../services/cosmosService')
+const { getBaseline, saveBaseline } = require('../services/blobService')
 const { getResourceConfig }         = require('../services/azureResourceService')
 const { getApiVersion }             = require('../services/azureResourceService')
 const { ResourceManagementClient }  = require('@azure/arm-resources')

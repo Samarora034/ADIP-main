@@ -1,6 +1,6 @@
 const router = require('express').Router()
 const { explainDrift, reclassifySeverity, getRemediationRecommendation, detectAnomalies } = require('../services/aiService')
-const { getDriftRecords } = require('../services/cosmosService')
+const { getDriftRecords } = require('../services/blobService')
 
 // POST /api/ai/explain — Feature 1: plain-English drift explanation
 router.post('/ai/explain', async (req, res) => {

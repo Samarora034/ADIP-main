@@ -1,5 +1,5 @@
 const router = require('express').Router()
-const { getDriftRecords } = require('../services/cosmosService')
+const { getDriftRecords } = require('../services/blobService')
 
 router.get('/drift-events', async (req, res) => {
   const { subscriptionId, resourceGroup, severity, limit } = req.query

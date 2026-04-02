@@ -1,7 +1,7 @@
 const router = require('express').Router()
 const { ResourceManagementClient } = require('@azure/arm-resources')
 const { DefaultAzureCredential } = require('@azure/identity')
-const { getBaseline } = require('../services/cosmosService')
+const { getBaseline } = require('../services/blobService')
 const { getResourceConfig } = require('../services/azureResourceService')
 const { getApiVersion } = require('../services/azureResourceService')
 const { sendDriftAlert } = require('../services/alertService')

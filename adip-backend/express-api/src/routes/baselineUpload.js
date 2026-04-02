@@ -1,5 +1,5 @@
 const router = require('express').Router()
-const { upsertBaseline } = require('../services/cosmosService')
+const { upsertBaseline } = require('../services/blobService')
 
 // POST /api/baselines/upload
 // Accepts a custom golden baseline JSON uploaded from the frontend

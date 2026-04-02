@@ -1,7 +1,7 @@
 const router = require('express').Router()
 const { diff } = require('deep-diff')
 const { getResourceConfig } = require('../services/azureResourceService')
-const { getBaseline, saveDriftRecord } = require('../services/cosmosService')
+const { getBaseline, saveDriftRecord } = require('../services/blobService')
 const { broadcastDriftEvent } = require('../services/signalrService')
 const { sendDriftAlert } = require('../services/alertService')
 const { explainDrift, reclassifySeverity } = require('../services/aiService')

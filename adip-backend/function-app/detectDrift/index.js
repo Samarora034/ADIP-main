@@ -1,14 +1,24 @@
 require('dotenv').config()
 const { ResourceManagementClient } = require('@azure/arm-resources')
 const { DefaultAzureCredential }   = require('@azure/identity')
-const { CosmosClient }             = require('@azure/cosmos')
-const fetch                        = require('node-fetch')
+const { BlobServiceClient } = require('@azure/storage-blob')
+const fetch                 = require('node-fetch')
 
-// ── Cosmos DB — initialised once at module load (warm reuse across invocations) ──
-const cosmos          = new CosmosClient({ endpoint: process.env.COSMOS_ENDPOINT, key: process.env.COSMOS_KEY })
-const db              = cosmos.database(process.env.COSMOS_DB || 'adip-db')
-const driftContainer  = db.container(process.env.COSMOS_CONTAINER_DRIFT    || 'drift-records')
-const baselineContainer = db.container(process.env.COSMOS_CONTAINER_BASELINE || 'baselines')
+// ── Blob Storage — initialised once at module load ────────────────────────────
+const blobService = BlobServiceClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING)
+const baselineCtr = blobService.getContainerClient('baselines')
+const driftCtr    = blobService.getContainerClient('drift-records')
+
+function blobKey(resourceId) {
+  return Buffer.from(resourceId).toString('base64url') + '.json'
+}
+function driftKey(resourceId, ts) {
+  return `${(ts||new Date().toISOString()).replace(/[:.]/g,'-')}_${Buffer.from(resourceId).toString('base64url')}.json`
+}
+async function readBlob(ctr, name) {
+  try { const buf = await ctr.getBlobClient(name).downloadToBuffer(); return JSON.parse(buf.toString()) }
+  catch(e) { if(e.statusCode===404||e.code==='BlobNotFound') return null; throw e }
+}
 
 const VOLATILE       = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag']
 const CRITICAL_PATHS = ['properties.networkAcls','properties.accessPolicies','properties.securityRules','sku','location','identity','properties.encryption']
@@ -149,22 +159,8 @@ module.exports = async function (context, req) {
     const liveRaw = await armClient.resources.get(rgName, provider, '', type, name, apiVersion)
     const live    = strip(liveRaw)
 
-    // ── Task 3: Point Read (1 RU) instead of query ────────────────────────────
-    // Requires knowing the document id. We store baselines with a deterministic id.
-    // Fall back to query only if point read misses.
-    let baseline = null
-    const pointId = `baseline-active-${Buffer.from(resourceId).toString('base64').replace(/[/+=]/g,'_')}`
-    try {
-      const { resource } = await baselineContainer.item(pointId, resourceId).read()
-      baseline = resource || null
-    } catch {
-      // Point read missed — fall back to query (costs ~2.5 RU, happens once per new resource)
-      const { resources } = await baselineContainer.items.query({
-        query: 'SELECT TOP 1 * FROM c WHERE c.resourceId = @rid AND c.active = true ORDER BY c._ts DESC',
-        parameters: [{ name: '@rid', value: resourceId }],
-      }).fetchAll()
-      baseline = resources[0] || null
-    }
+    // ── Blob read — O(1), equivalent to Cosmos point read ───────────────────────
+    const baseline = await readBlob(baselineCtr, blobKey(resourceId))
 
     // ── Task 2: Use hardened diff engine ─────────────────────────────────────
     const baseState = baseline ? strip(baseline.resourceState) : null
@@ -177,8 +173,8 @@ module.exports = async function (context, req) {
       return
     }
 
+    const detectedAt = new Date().toISOString()
     const record = {
-      id:            `drift-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       subscriptionId, resourceId,
       resourceGroup: rgName,
       liveState:     live,
@@ -186,10 +182,13 @@ module.exports = async function (context, req) {
       differences:   changes,
       severity,
       changeCount:   changes.length,
-      detectedAt:    new Date().toISOString(),
+      detectedAt,
     }
 
-    await driftContainer.items.create(record)
+    // Write drift record to Blob Storage
+    const driftBody = JSON.stringify(record)
+    await driftCtr.getBlockBlobClient(driftKey(resourceId, detectedAt))
+      .upload(driftBody, Buffer.byteLength(driftBody), { blobHTTPHeaders: { blobContentType: 'application/json' } })
 
     const apiUrl = process.env.EXPRESS_API_URL
     if (apiUrl) {

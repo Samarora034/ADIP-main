@@ -1,5 +1,5 @@
 const router = require('express').Router()
-const { getBaseline, saveBaseline } = require('../services/cosmosService')
+const { getBaseline, saveBaseline } = require('../services/blobService')
 
 router.get('/baselines', async (req, res) => {
   const { subscriptionId, resourceId } = req.query
