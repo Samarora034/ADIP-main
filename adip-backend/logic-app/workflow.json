@@ -76,7 +76,7 @@
                   "type": "Http",
                   "inputs": {
                     "method": "POST",
-                    //"uri": "https://adip-func-001.azurewebsites.net/api/detectDrift?code=YOUR_FUNCTION_KEY",
+                    "uri": "https://adip-func-001.azurewebsites.net/api/detectDrift?code=YOUR_FUNCTION_KEY",
                     "headers": { "Content-Type": "application/json" },
                     "body": {
                       "resourceId":     "@triggerBody()?[0]?['data']?['resourceUri']",

@@ -5,6 +5,8 @@
 adip-backend/express-api/.env
 adip-backend/function-app/.env
 
+ adip-backend/logic-app/workflow.json:79
+
 # Dependencies
 node_modules/
 
