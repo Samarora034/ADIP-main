@@ -16,8 +16,11 @@ function parseMessage(msg) {
     const decoded     = Buffer.from(msg.messageText, 'base64').toString('utf-8')
     const parsed      = JSON.parse(decoded)
     const event       = Array.isArray(parsed) ? parsed[0] : parsed
-    const resourceUri = event.data?.resourceUri || event.subject || ''
-    const parts       = resourceUri.split('/')
+    let resourceUri = event.data?.resourceUri || event.subject || ''
+    // Normalize child resource URIs to parent (e.g. blobServices/default -> storageAccounts/foo)
+    const uriParts = resourceUri.split('/')
+    if (uriParts.length > 9) resourceUri = uriParts.slice(0, 9).join('/')
+    const parts = resourceUri.split('/')
     const resourceGroup = parts.length >= 5 ? parts[4] : (event.data?.resourceGroupName || '')
 
     // Extract caller: prefer display name from claims, fall back to email/UPN
@@ -41,7 +44,7 @@ function parseMessage(msg) {
   } catch { return null }
 }
 
-const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag']
+const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag','primaryEndpoints','secondaryEndpoints','primaryLocation','secondaryLocation','statusOfPrimary','statusOfSecondary','creationTime']
 function strip(obj) {
   if (Array.isArray(obj)) return obj.map(strip)
   if (obj && typeof obj === 'object')
@@ -78,7 +81,9 @@ function computeDiff(prev, curr, path, results) {
     return
   }
   if (Array.isArray(prev) && Array.isArray(curr)) {
-    if (JSON.stringify(prev) !== JSON.stringify(curr)) {
+    const stableStr = (v) => JSON.stringify(v, Object.keys(v || {}).sort())
+    const normArr = (a) => JSON.stringify(a.map(i => typeof i === 'object' && i ? stableStr(i) : i).sort())
+    if (normArr(prev) !== normArr(curr)) {
       const added   = curr.filter(c => !prev.some(p => JSON.stringify(p) === JSON.stringify(c)))
       const removed = prev.filter(p => !curr.some(c => JSON.stringify(c) === JSON.stringify(p)))
       const field   = path.split(' → ').pop()
@@ -101,9 +106,19 @@ function computeDiff(prev, curr, path, results) {
   }
 }
 
+// Flatten _childConfig into top-level so baseline (without _childConfig) diffs cleanly
+function normalize(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+  const { _childConfig, ...rest } = obj
+  if (_childConfig) {
+    Object.entries(_childConfig).forEach(([k, v]) => { rest[k] = v })
+  }
+  return rest
+}
+
 function formatDiff(prev, curr) {
   const results = []
-  computeDiff(prev, curr, '', results)
+  computeDiff(normalize(prev), normalize(curr), '', results)
   return results.filter(r => r.path !== '')
 }
 
@@ -114,10 +129,21 @@ const liveStateCache = {}
 async function enrichWithDiff(event) {
   if (!event.resourceId || !event.subscriptionId || !event.resourceGroup) return event
   try {
-    const liveRaw  = await getResourceConfig(event.subscriptionId, event.resourceGroup, event.resourceId)
-    const current  = strip(liveRaw)
-    const previous = liveStateCache[event.resourceId] || null
-    const changes  = previous ? formatDiff(previous, current) : []
+    const liveRaw = await getResourceConfig(event.subscriptionId, event.resourceGroup, event.resourceId)
+    const current = strip(liveRaw)
+
+    let previous = liveStateCache[event.resourceId] || null
+
+    // If no cached previous state, fall back to stored baseline so we always show a diff
+    if (!previous) {
+      try {
+        const { getBaseline } = require('./blobService')
+        const baseline = await getBaseline(event.subscriptionId, event.resourceId)
+        if (baseline?.resourceState) previous = strip(baseline.resourceState)
+      } catch (_) {}
+    }
+
+    const changes = previous ? formatDiff(previous, current) : []
 
     // Always update cache after fetching
     liveStateCache[event.resourceId] = current
@@ -133,7 +159,6 @@ async function enrichWithDiff(event) {
     return event
   }
 }
-
 // Deduplication keyed on eventId
 const dedupCache = new Set()
 function isDuplicate(event) {

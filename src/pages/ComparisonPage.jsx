@@ -15,6 +15,8 @@ const CRITICAL_PATHS = [
 function classifySeverity(differences) {
   if (!differences.length) return null
   if (differences.some(d => d.type === 'removed')) return 'critical'
+  const tagChanges = differences.filter(d => d.path?.includes('tags'))
+  if (tagChanges.length >= 3) return 'critical'
   if (differences.some(d => CRITICAL_PATHS.some(p => d.path.startsWith(p)))) return 'high'
   if (differences.length > 5) return 'medium'
   return 'low'
@@ -63,6 +65,8 @@ export default function ComparisonPage() {
   const state     = location.state ?? {}
 
   const { subscriptionId, resourceGroupId, resourceId, resourceName, liveState: passedLive } = state
+  // Use resourceId if a specific resource was selected, otherwise fall back to resourceGroupId
+  const effectiveId = resourceId || resourceGroupId
 
   const [baseline,       setBaseline]       = useState(null)
   const [differences,    setDifferences]    = useState([])
@@ -93,7 +97,7 @@ export default function ComparisonPage() {
       // Fetch baseline and policy compliance in parallel
       fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId).then(setPolicyData).catch(() => {})
       try {
-        const data = await fetchBaseline(subscriptionId, resourceId)
+        const data = await fetchBaseline(subscriptionId, effectiveId)
         if (data?.resourceState) {
           const normBaseline = normaliseState(data.resourceState)
           const normLive     = normaliseState(passedLive)
@@ -128,32 +132,34 @@ export default function ComparisonPage() {
     setRemediating(true)
     setRemediateErr(null)
     setRemediateDiff(null)
-    // Feature 3: fetch AI recommendation before applying remediation
     fetchAiRecommendation({ resourceId, resourceGroup: resourceGroupId, subscriptionId,
       severity, differences, changes: differences })
       .then(r => setAiRecommend(r?.recommendation || null)).catch(() => {})
     try {
-      // Show what will be reverted: diff is baseline → live (what changed FROM baseline)
-      // We display this as "these fields will be reset to baseline values"
-      const normBaseline = baseline
-      const normLive     = normaliseState(passedLive)
-      const rawDiff      = deepDiff(normBaseline || {}, normLive) || []
+      const normLive = normaliseState(passedLive)
+      const rawDiff  = deepDiff(baseline || {}, normLive) || []
       setRemediateDiff(formatDifferences(rawDiff))
 
-      // Send approval email — admin must click Approve to actually apply the change
-      await requestRemediation({
-        subscriptionId, resourceGroupId, resourceId,
-        differences, changes: differences, severity,
-        caller: (() => { try { return JSON.parse(sessionStorage.getItem('user') || '{}') } catch { return {} } })().name || (() => { try { return JSON.parse(sessionStorage.getItem('user') || '{}') } catch { return {} } })().username || 'Dashboard User',
-      })
-      setRemediated(true)
+      if (severity === 'low') {
+        // Low severity: apply immediately, no email approval needed
+        await remediateToBaseline(subscriptionId, resourceGroupId, resourceId)
+        setRemediated(true)
+      } else {
+        // Critical / High / Medium: send approval email, wait for admin
+        const sessionUser = (() => { try { return JSON.parse(sessionStorage.getItem('user') || '{}') } catch { return {} } })()
+        await requestRemediation({
+          subscriptionId, resourceGroupId, resourceId,
+          differences, changes: differences, severity,
+          caller: sessionUser.name || sessionUser.username || 'Dashboard User',
+        })
+        setRemediated(true)
+      }
     } catch (err) {
       setRemediateErr(err.message)
     } finally {
       setRemediating(false)
     }
   }
-
   // Task 1: file upload handler with client-side JSON validation
   const handleUpload = (e) => {
     const file = e.target.files?.[0]
@@ -168,24 +174,48 @@ export default function ComparisonPage() {
       try { parsed = JSON.parse(ev.target.result) }
       catch { setUploadMsg({ ok: false, text: 'Invalid JSON — file could not be parsed.' }); return }
 
+      // If user uploads an ARM template export, extract the first resource's config
+      if (parsed.$schema?.includes('deploymentTemplate') && Array.isArray(parsed.resources)) {
+        const res = parsed.resources[0]
+        if (!res) { setUploadMsg({ ok: false, text: 'ARM template has no resources.' }); return }
+        // Resolve [parameters('...')] references to their defaultValues
+        const params = parsed.parameters || {}
+        const resolveParam = (val) => {
+          if (typeof val !== 'string') return val
+          const m = val.match(/^\[parameters\('([^']+)'\)\]$/)
+          return m ? (params[m[1]]?.defaultValue ?? val) : val
+        }
+        const resolveAll = (obj) => {
+          if (typeof obj === 'string') return resolveParam(obj)
+          if (Array.isArray(obj)) return obj.map(resolveAll)
+          if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, resolveAll(v)]))
+          return obj
+        }
+        parsed = resolveAll(res)
+        setUploadMsg({ ok: true, text: `ARM template detected — extracted resource: ${parsed.name || parsed.type}` })
+      }
+
       setUploading(true)
       setUploadMsg(null)
       try {
-        await uploadBaseline(subscriptionId, resourceGroupId, resourceId, parsed)
-        setUploadMsg({ ok: true, text: 'Golden baseline uploaded. Reloading comparison...' })
-        // Re-fetch baseline and recompute diff so the page reflects the new baseline immediately
-        const fresh = await fetchBaseline(subscriptionId, resourceId)
+        await uploadBaseline(subscriptionId, resourceGroupId, effectiveId, parsed)
+        setLoading(true)
+        setNoBaseline(false)
+        const fresh = await fetchBaseline(subscriptionId, effectiveId)
         if (fresh?.resourceState) {
           const normBaseline = normaliseState(fresh.resourceState)
           const normLive     = normaliseState(passedLive)
-          setBaseline(normBaseline)
-          setNoBaseline(false)
           const rawDiff = deepDiff(normBaseline, normLive) || []
           const fmtDiff = formatDifferences(rawDiff)
+          setBaseline(normBaseline)
           setDifferences(fmtDiff)
           setSeverity(classifySeverity(fmtDiff))
           setUploadMsg({ ok: true, text: 'Golden baseline uploaded and applied. Comparison updated.' })
+        } else {
+          setNoBaseline(true)
+          setUploadMsg({ ok: false, text: 'Upload succeeded but baseline could not be retrieved.' })
         }
+        setLoading(false)
       } catch (err) {
         setUploadMsg({ ok: false, text: `Upload failed: ${err.message}` })
       } finally {
@@ -275,11 +305,11 @@ export default function ComparisonPage() {
                 disabled={remediating || remediated}
               >
                 {remediating ? (
-                  <><div className="btn-spinner btn-spinner--dark" /><span>Sending request...</span></>
+                  <><div className="btn-spinner btn-spinner--dark" /><span>{severity === 'low' ? 'Applying...' : 'Sending request...'}</span></>
                 ) : remediated ? (
-                  <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg><span>Request Sent!</span></>
+                  <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg><span>{severity === 'low' ? 'Remediated!' : 'Request Sent!'}</span></>
                 ) : (
-                  <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 0 1 0 8h-1"/></svg><span>Remediate to Baseline</span></>
+                  <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 0 1 0 8h-1"/></svg><span>{severity === 'low' ? 'Auto-Remediate (Low)' : 'Remediate to Baseline'}</span></>
                 )}
               </button>
             )}
@@ -338,7 +368,7 @@ export default function ComparisonPage() {
           {/* Promote diff output */}
           {remediated && remediateDiff !== null && (
             <div className="comparison-alert comparison-alert--success">
-              <strong>✓ Approval request sent — an email has been dispatched to the administrator.</strong>
+              <strong>{severity === 'low' ? '✓ Remediation applied — resource reverted to baseline.' : '✓ Approval request sent — an email has been dispatched to the administrator.'}</strong>
               {remediateDiff.length === 0 ? (
                 <span> No changes detected — resource already matches the baseline.</span>
               ) : (
@@ -456,7 +486,7 @@ export default function ComparisonPage() {
                 </div>
                 <div className="panel-body panel-body-json">
                   {baseline
-                    ? <JsonTree ref={baselineTreeRef} data={baseline} />
+                    ? <JsonTree key={JSON.stringify(baseline).slice(0,64)} ref={baselineTreeRef} data={baseline} />
                     : <div className="panel-empty"><p>No baseline stored</p></div>
                   }
                 </div>

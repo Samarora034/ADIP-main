@@ -97,6 +97,35 @@ async function listResources(subscriptionId, resourceGroupName) {
   return resources
 }
 
+// Child resource paths to fetch and merge for each parent resource type
+const CHILD_RESOURCES = {
+  storageaccounts: [
+    { child: 'blobServices',  name: 'default', apiVersion: '2023-01-01' },
+    { child: 'fileServices',  name: 'default', apiVersion: '2023-01-01' },
+    { child: 'queueServices', name: 'default', apiVersion: '2023-01-01' },
+    { child: 'tableServices', name: 'default', apiVersion: '2023-01-01' },
+  ],
+  sites: [
+    { child: 'config', name: 'web', apiVersion: '2023-01-01' },
+  ],
+}
+
+async function fetchWithFallback(client, rg, provider, type, name, apiVersion) {
+  try {
+    return await client.resources.get(rg, provider, '', type, name, apiVersion)
+  } catch (err) {
+    const match = err.message?.match(/The supported api-versions are '([^']+)'/)
+    if (match) {
+      const versions = match[1].split(', ')
+      const stable   = versions.filter(v => !v.includes('preview'))
+      const fallback = stable[stable.length - 1] || versions[versions.length - 1]
+      API_VERSION_MAP[type.toLowerCase()] = fallback
+      return await client.resources.get(rg, provider, '', type, name, fallback)
+    }
+    throw err
+  }
+}
+
 async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) {
   const client = resourceClient(subscriptionId)
   if (resourceId) {
@@ -105,21 +134,25 @@ async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) 
     const type       = parts[7]
     const name       = parts[8]
     const apiVersion = await getApiVersion(subscriptionId, provider, type)
-    try {
-      return await client.resources.get(resourceGroupName, provider, '', type, name, apiVersion)
-    } catch (err) {
-      // Extract correct version from error message and retry once
-      const match = err.message?.match(/The supported api-versions are '([^']+)'/)
-      if (match) {
-        const versions = match[1].split(', ')
-        const stable   = versions.filter(v => !v.includes('preview'))
-        const fallback = stable[stable.length - 1] || versions[versions.length - 1]
-        // Cache it so subsequent calls use the right version
-        API_VERSION_MAP[type.toLowerCase()] = fallback
-        return await client.resources.get(resourceGroupName, provider, '', type, name, fallback)
-      }
-      throw err
+
+    const resource = await fetchWithFallback(client, resourceGroupName, provider, type, name, apiVersion)
+
+    // Fetch child resources and merge (e.g. blobServices/default for storage accounts)
+    const children = CHILD_RESOURCES[type.toLowerCase()] || []
+    if (children.length) {
+      const results = await Promise.allSettled(
+        children.map(c =>
+          client.resources.get(resourceGroupName, provider, `${type}/${name}`, c.child, c.name, c.apiVersion)
+            .catch(() => null)
+        )
+      )
+      resource._childConfig = {}
+      children.forEach((c, i) => {
+        if (results[i].value) resource._childConfig[c.child] = results[i].value
+      })
     }
+
+    return resource
   }
   const resources = []
   for await (const r of client.resources.listByResourceGroup(resourceGroupName, { expand: 'properties' })) {
@@ -128,5 +161,4 @@ async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) 
   const rg = await client.resourceGroups.get(resourceGroupName)
   return { resourceGroup: rg, resources }
 }
-
 module.exports = { listSubscriptions, listResourceGroups, listResources, getResourceConfig, getApiVersion }

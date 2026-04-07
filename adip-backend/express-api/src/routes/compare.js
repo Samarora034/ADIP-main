@@ -23,6 +23,8 @@ function strip(obj) {
 function classifySeverity(differences) {
   if (!differences.length) return 'none'
   if (differences.some(d => d.kind === 'D')) return 'critical'
+  const tagChanges = differences.filter(d => d.path?.includes('tags'))
+  if (tagChanges.length >= 3) return 'critical'
   if (differences.some(d => CRITICAL_PATHS.some(p => d.path?.join('.').startsWith(p)))) return 'high'
   if (differences.length > 5) return 'medium'
   return 'low'

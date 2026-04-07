@@ -21,7 +21,7 @@ async function readBlob(ctr, name) {
   catch(e) { if(e.statusCode===404||e.code==='BlobNotFound') return null; throw e }
 }
 
-const VOLATILE       = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag']
+const VOLATILE       = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag','primaryEndpoints','secondaryEndpoints','primaryLocation','secondaryLocation','statusOfPrimary','statusOfSecondary','creationTime']
 const CRITICAL_PATHS = ['properties.networkAcls','properties.accessPolicies','properties.securityRules','sku','location','identity','properties.encryption']
 
 const API_VERSION_MAP = {
@@ -42,6 +42,8 @@ function strip(obj) {
 function classifySeverity(diffs) {
   if (!diffs.length) return 'none'
   if (diffs.some(d => d.type === 'removed')) return 'critical'
+  const tagChanges = diffs.filter(d => d.path.includes('tags'))
+  if (tagChanges.length >= 3) return 'critical'
   if (diffs.some(d => CRITICAL_PATHS.some(p => d.path.startsWith(p)))) return 'high'
   if (diffs.length > 5) return 'medium'
   return 'low'
@@ -74,7 +76,9 @@ function computeDiff(prev, curr, path, results) {
   }
 
   if (Array.isArray(prev) && Array.isArray(curr)) {
-    if (JSON.stringify(prev) !== JSON.stringify(curr)) {
+    const stableStr = (v) => JSON.stringify(v, Object.keys(v || {}).sort())
+    const normArr = (a) => JSON.stringify(a.map(i => typeof i === 'object' && i ? stableStr(i) : i).sort())
+    if (normArr(prev) !== normArr(curr)) {
       const added   = curr.filter(c => !prev.some(p => JSON.stringify(p) === JSON.stringify(c)))
       const removed = prev.filter(p => !curr.some(c => JSON.stringify(c) === JSON.stringify(p)))
       if (added.length > 0)
@@ -110,9 +114,16 @@ function computeDiff(prev, curr, path, results) {
   }
 }
 
+function normalize(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+  const { _childConfig, ...rest } = obj
+  if (_childConfig) Object.entries(_childConfig).forEach(([k, v]) => { rest[k] = v })
+  return rest
+}
+
 function diffObjects(prev, curr) {
   const results = []
-  computeDiff(prev, curr, '', results)
+  computeDiff(normalize(prev), normalize(curr), '', results)
   return results.filter(r => r.path !== '')
 }
 
