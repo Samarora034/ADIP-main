@@ -123,7 +123,7 @@ export default function DashboardPage() {
   const resolveUser = (ev) => (ev.caller && ev.caller !== 'unknown' && ev.caller !== 'Unknown user') ? ev.caller : (_su.name || _su.username || 'Unknown user')
   const uniqueUsers = useMemo(() => [...new Set(driftEvents.map(resolveUser))].sort(), [driftEvents])
   const filteredDriftEvents = useMemo(() => userFilter ? driftEvents.filter(ev => resolveUser(ev) === userFilter) : driftEvents, [driftEvents, userFilter])
-
+  //download funcitonality variables
   const downloadActivity = () => {
     const rows = [['Time', 'User', 'Action', 'Resource', 'ResourceType', 'ResourceGroup', 'Operation', 'FieldsChanged', 'Changes']]
     // Scan log entries
@@ -140,7 +140,9 @@ export default function DashboardPage() {
       const changes = (ev.changes || []).map(c => {
         const segs = (c.path || '').split(' → ').filter(s => s && s !== '_childConfig')
         const p = segs.slice(-3).join('.')
+        //old value
         const ov = c.oldValue != null ? String(typeof c.oldValue === 'object' ? JSON.stringify(c.oldValue) : c.oldValue) : ''
+        //new value
         const nv = c.newValue != null ? String(typeof c.newValue === 'object' ? JSON.stringify(c.newValue) : c.newValue) : ''
         return ov && nv ? `${p}: ${ov} -> ${nv}` : ov ? `${p}: removed (was ${ov})` : `${p}: added (${nv})`
       }).join(' | ')
@@ -183,7 +185,7 @@ export default function DashboardPage() {
     setScanProgress(0)
 
     const configPromise = isDemoMode
-      ? new Promise(resolve => setTimeout(() => resolve(getDemoConfig()), LIVE_EVENTS_TEMPLATE.length * 600))
+      ? new Promise(resolve => setTimeout(() => resolve(getDemoConfig()), LIVE_EVENTS_TEMPLATE.length * 100))
       : fetchResourceConfiguration(subscription, resourceGroup, resource || null)
 
     let idx = 0
@@ -194,7 +196,7 @@ export default function DashboardPage() {
           timestamp: new Date().toLocaleTimeString(),
           id: Date.now() + idx,
         }])
-        setScanProgress(Math.round(((idx + 1) / LIVE_EVENTS_TEMPLATE.length) * 100))
+        setScanProgress(Math.round(((idx + 1) / LIVE_EVENTS_TEMPLATE.length) * 10))
         idx++
       } else {
         clearInterval(scanInterval.current)
@@ -242,7 +244,7 @@ export default function DashboardPage() {
           })
           .finally(() => setIsScanning(false))
       }
-    }, 600)
+    }, 10)
   }
 
   const handleStop = () => {
@@ -651,15 +653,15 @@ export default function DashboardPage() {
                           <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 'auto' }}>{ev.changes.length} field{ev.changes.length > 1 ? 's' : ''} changed</span>
                         )}
                       </div>
-                      {ev.changes?.length > 0 && (
+                      {ev.changes?.length >= 0 && (
                         <div style={{ paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.06)', marginLeft: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
                           {ev.changes.slice(0, 8).map((c, i) => {
                             const typeColor = { modified: '#f59e0b', added: '#22c55e', removed: '#ef4444', 'array-added': '#22c55e', 'array-removed': '#ef4444' }[c.type] || '#94a3b8'
                             // Show last 3 path segments, skip internal '_childConfig' prefix
                             const pathSegs = (c.path || '').split(' → ').filter(s => s && s !== '_childConfig')
                             const displayPath = pathSegs.slice(-3).join(' → ')
-                            const displayOld = c.oldValue != null ? String(typeof c.oldValue === 'object' ? JSON.stringify(c.oldValue) : c.oldValue).slice(0, 50) : null
-                            const displayNew = c.newValue != null ? String(typeof c.newValue === 'object' ? JSON.stringify(c.newValue) : c.newValue).slice(0, 50) : null
+                            const displayOld = c.oldValue != null ? String(typeof c.oldValue === 'object' ? JSON.stringify(c.oldValue) : c.oldValue).slice(0, 500) : null
+                            const displayNew = c.newValue != null ? String(typeof c.newValue === 'object' ? JSON.stringify(c.newValue) : c.newValue).slice(0, 500) : null
                             return (
                               <div key={i} style={{ fontSize: 11, display: 'flex', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' }}>
                                 <span style={{ fontSize: 9, fontWeight: 700, color: typeColor, textTransform: 'uppercase', minWidth: 44 }}>{c.type?.replace('-', ' ')}</span>

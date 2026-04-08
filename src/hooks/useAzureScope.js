@@ -61,7 +61,7 @@ export function useAzureScope() {
     setScopeError(null)
     try {
       if (isDemoMode) {
-        await new Promise(r => setTimeout(r, 150))
+        await new Promise(r => setTimeout(r, 10))
         setResourceGroups(DEMO_RGS[subscriptionId] ?? [])
       } else {
         const data = await apiFetchRGs(subscriptionId)
@@ -81,7 +81,7 @@ export function useAzureScope() {
     setScopeError(null)
     try {
       if (isDemoMode) {
-        await new Promise(r => setTimeout(r, 100))
+        await new Promise(r => setTimeout(r, 10))
         setResources(DEMO_RESOURCES[resourceGroupId] ?? [])
       } else {
         const data = await apiFetchResources(subscriptionId, resourceGroupId)

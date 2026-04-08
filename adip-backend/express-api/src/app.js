@@ -64,19 +64,6 @@ app.post('/api/cache-state', express.json(), (req, res) => {
   res.json({ cached: true, resourceId })
 })
 
-// SignalR webhook — Function App posts drift events here
-app.post('/internal/drift-event', express.json(), (req, res) => {
-  const event = req.body
-  if (event?.subscriptionId) {
-    const room = event.resourceGroup
-      ? `${event.subscriptionId}:${event.resourceGroup}`
-      : event.subscriptionId
-    io.to(room).emit('driftEvent', event)
-    sendDriftAlert(event).catch(err => console.error('[Alert]', err.message))
-  }
-  res.sendStatus(200)
-})
-
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
   console.log(`ADIP API running on port ${PORT}`)

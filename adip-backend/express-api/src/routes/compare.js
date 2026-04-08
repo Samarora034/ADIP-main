@@ -2,7 +2,6 @@ const router = require('express').Router()
 const { diff } = require('deep-diff')
 const { getResourceConfig } = require('../services/azureResourceService')
 const { getBaseline, saveDriftRecord } = require('../services/blobService')
-const { broadcastDriftEvent } = require('../services/signalrService')
 const { sendDriftAlert } = require('../services/alertService')
 const { explainDrift, reclassifySeverity } = require('../services/aiService')
 
@@ -87,7 +86,7 @@ router.post('/compare', async (req, res) => {
 
 // Start real-time monitoring (polls every 30s, pushes via Socket.IO)
 router.post('/monitor/start', (req, res) => {
-  const { subscriptionId, resourceGroupId, resourceId, intervalMs = 30000 } = req.body
+  const { subscriptionId, resourceGroupId, resourceId, intervalMs = 300 } = req.body
   if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
 
   const key = `${subscriptionId}:${resourceGroupId}:${resourceId || ''}`
@@ -95,7 +94,7 @@ router.post('/monitor/start', (req, res) => {
 
   monitoringSessions[key] = setInterval(async () => {
     try { await runDriftCheck(subscriptionId, resourceGroupId, resourceId || null) } catch (_) {}
-  }, Math.max(intervalMs, 15000))
+  }, Math.max(intervalMs, 150))
 
   res.json({ monitoring: true, key, intervalMs })
 })

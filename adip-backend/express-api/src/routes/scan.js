@@ -15,6 +15,6 @@ router.post('/scan/start', async (req, res) => {
 })
 
 router.post('/scan/:scanId/stop', (req, res) => res.json({ scanId: req.params.scanId, status: 'stopped' }))
-router.get('/scan/:scanId/status', (req, res) => res.json({ scanId: req.params.scanId, status: 'complete', progress: 100 }))
+router.get('/scan/:scanId/status', (req, res) => res.json({ scanId: req.params.scanId, status: 'complete', progress: 10 }))
 
 module.exports = router

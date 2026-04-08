@@ -53,7 +53,7 @@ async function reclassifySeverity(record) {
       `Resource type: ${record.resourceId?.split('/')[7] || 'unknown'}
 Rule-based severity: ${record.severity}
 Changes:\n${changes}`,
-      150
+      10
     )
     return JSON.parse(response.replace(/```json|```/g, '').trim())
   } catch (e) { console.error('[AI reclassify]', e.message); return null }
@@ -91,7 +91,7 @@ async function detectAnomalies(driftRecords) {
     const response = await chat(
       'You are an Azure security analyst. Find anomalies in this drift history. Respond ONLY with valid JSON array (max 3 items): [{"title":"short title","description":"1-2 sentences","severity":"high|medium|low","affectedResource":"name"}]. Return [] if no anomalies.',
       JSON.stringify(summary),
-      500
+      50
     )
     const parsed = JSON.parse(response.replace(/```json|```/g, '').trim())
     return Array.isArray(parsed) ? parsed : []

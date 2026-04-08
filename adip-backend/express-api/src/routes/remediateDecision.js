@@ -82,6 +82,7 @@ router.get('/remediate-decision', async (req, res) => {
 })
 
 // Simple HTML response page shown after clicking Approve/Reject
+//approval page
 function html(title, message, color) {
   return `<!DOCTYPE html>
 <html><head><title>ADIP — ${title}</title>
@@ -93,7 +94,7 @@ a{display:inline-block;margin-top:20px;padding:10px 24px;background:#1d4ed8;colo
 <div class="card">
   <h2>${title}</h2>
   <p>${message}</p>
-  <a href="/">Return to ADIP Dashboard</a>
+  <a href="http://localhost:3001">Return to ADIP Dashboard</a>
 </div>
 </body></html>`
 }

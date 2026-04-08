@@ -240,7 +240,7 @@ export async function uploadBaseline(subscriptionId, resourceGroupId, resourceId
 export async function startMonitoring(subscriptionId, resourceGroupId, resourceId = null) {
   return apiRequest('/monitor/start', {
     method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, intervalMs: 30000 }),
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, intervalMs: 300 }),
   })
 }
 

@@ -88,7 +88,7 @@ async function getDriftRecords({ subscriptionId, resourceGroup, severity, limit 
 
 // ── Drift History (Task 3) — filtered listing ─────────────────────────────────
 
-async function getDriftHistory({ subscriptionId, startDate, endDate, resourceId, resourceGroup, limit = 100 }) {
+async function getDriftHistory({ subscriptionId, startDate, endDate, resourceId, resourceGroup, limit = 1000 }) {
   const results = []
   const startTs = startDate ? new Date(startDate).toISOString().replace(/[:.]/g, '-') : null
   const endTs   = endDate   ? new Date(endDate).toISOString().replace(/[:.]/g, '-')   : null

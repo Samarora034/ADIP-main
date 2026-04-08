@@ -1,4 +1,3 @@
-// SignalR REST broadcast helper (used by Function App webhook path)
 // Socket.IO handles the actual frontend push via global.io in app.js
 function broadcastDriftEvent(event) {
   if (!global.io) return
