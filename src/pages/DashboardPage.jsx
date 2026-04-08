@@ -7,6 +7,7 @@ import { useDriftSocket } from '../hooks/useDriftSocket'
 import { fetchResourceConfiguration, stopMonitoring, fetchPolicyCompliance, cacheState, fetchAnomalies } from '../services/api'
 import './DashboardPage.css'
 import { useDashboard } from '../context/DashboardContext'
+import LiveActivityFeed from '../components/LiveActivityFeed'
 
 // ── Demo config data — used as fallback when backend is not yet connected ──
 const RESOURCE_CONFIGS = {
@@ -117,6 +118,7 @@ export default function DashboardPage() {
   }, [subscription, resourceGroup, resource, setConfigData])
 
   const { driftEvents, socketConnected, clearDriftEvents } = useDriftSocket(scope, isSubmitted, handleConfigUpdate)
+<<<<<<< HEAD
   const [userFilter, setUserFilter] = useState('')
   const liveLogRef = useRef(null)  // local UI ref only
   const resolveUser = (ev) => {
@@ -170,6 +172,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (liveLogRef.current) liveLogRef.current.scrollTop = liveLogRef.current.scrollHeight
   }, [liveEvents, driftEvents])
+=======
+
+>>>>>>> 603e85ae615700dabfbeec3adeefee440674d11c
 
   useEffect(() => () => { if (scanInterval.current) clearInterval(scanInterval.current) }, [])
 
@@ -277,7 +282,6 @@ export default function DashboardPage() {
     setPolicyData(null)
     setAnomalies([])
     clearDriftEvents()
-    setUserFilter('')
   }
 
   // ── Navigate to comparison page with current live state ───────────────
@@ -296,13 +300,15 @@ export default function DashboardPage() {
   }
 
   const handleGenome = () => {
-    if (!resource) return
+    if (!resourceGroup) return
     navigate('/genome', {
       state: {
         subscriptionId: subscription,
         resourceGroupId: resourceGroup,
-        resourceId: resource,
-        resourceName: resources.find(r => r.id === resource)?.name,
+        resourceId: resource || resourceGroup,
+        resourceName: resource
+          ? resources.find(r => r.id === resource)?.name
+          : resourceGroups.find(rg => rg.id === resourceGroup)?.name,
       },
     })
   }
@@ -538,7 +544,7 @@ export default function DashboardPage() {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 3h5v5M8 3H3v5M3 16v5h5M21 16v5h-5"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
                         <span>Compare</span>
                       </button>
-                      {resource && (
+                      {isSubmitted && (
                         <button className="panel-action-btn" onClick={handleGenome} title="Configuration Genome">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                           <span>Genome</span>
@@ -570,6 +576,7 @@ export default function DashboardPage() {
             </section>
 
             {/* Live Activity Panel */}
+<<<<<<< HEAD
             <section className="panel panel-live">
               <div className="panel-header">
                 <div className="panel-header-left">
@@ -707,6 +714,15 @@ export default function DashboardPage() {
                 })}
               </div>
             </section>
+=======
+            <LiveActivityFeed
+              liveEvents={liveEvents}
+              driftEvents={driftEvents}
+              isScanning={isScanning}
+              isMonitoring={isMonitoring}
+              socketConnected={socketConnected}
+            />
+>>>>>>> 603e85ae615700dabfbeec3adeefee440674d11c
           </main>
         </div>
       </div>

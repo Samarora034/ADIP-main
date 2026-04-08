@@ -46,6 +46,7 @@ app.use('/api', require('./routes/remediateDecision'))
 app.use('/api', require('./routes/remediateRequest'))
 app.use('/api', require('./routes/ai'))
 app.use('/api', require('./routes/genome'))
+app.use('/api', require('./routes/chat'))
 
 
 // ── POST /api/alert/email START ──────────────────────────────────────────────
@@ -111,7 +112,7 @@ app.post('/internal/drift-event', express.json(), (req, res) => {
     const room = event.resourceGroup
       ? `${event.subscriptionId}:${event.resourceGroup}`
       : event.subscriptionId
-    io.to(room).emit('driftEvent', event)
+    io.to(room).emit('resourceChange', event)  // unified event name
     sendDriftAlert(event).catch(err => console.error('[Alert]', err.message))
   }
   res.sendStatus(200)
