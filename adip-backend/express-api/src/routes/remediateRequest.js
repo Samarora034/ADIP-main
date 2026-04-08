@@ -1,15 +1,21 @@
-const router  = require('express').Router()
-const { sendDriftAlert } = require('../services/alertService')
-
-// POST /api/remediate-request
-// Called by frontend "Auto Remediate" button — sends approval email, returns immediately
-router.post('/remediate-request', async (req, res) => {
+// ============================================================
+// FILE: routes/remediateRequest.js
+// ============================================================
+const router_remediateRequest = require('express').Router()
+const { sendDriftAlert: sendDriftAlertForRequest } = require('../services/alertService')
+ 
+// ── POST /api/remediate-request START ────────────────────────────────────────
+// Sends a drift approval email to admins without applying remediation; waits for email click
+router_remediateRequest.post('/remediate-request', async (req, res) => {
+  console.log('[POST /remediate-request] starts')
   const { subscriptionId, resourceGroupId, resourceId, differences, changes, severity, caller } = req.body
-  if (!subscriptionId || !resourceId)
+  if (!subscriptionId || !resourceId) {
+    console.log('[POST /remediate-request] ends — missing required fields')
     return res.status(400).json({ error: 'subscriptionId and resourceId required' })
-
+  }
+ 
   try {
-    await sendDriftAlert({
+    await sendDriftAlertForRequest({
       subscriptionId,
       resourceGroup: resourceGroupId,
       resourceId,
@@ -21,9 +27,13 @@ router.post('/remediate-request', async (req, res) => {
       detectedAt:    new Date().toISOString(),
     })
     res.json({ requested: true, message: 'Approval email sent to administrators.' })
+    console.log('[POST /remediate-request] ends — email sent')
   } catch (err) {
+    console.log('[POST /remediate-request] ends — error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })
-
-module.exports = router
+// ── POST /api/remediate-request END ──────────────────────────────────────────
+ 
+module.exports = router_remediateRequest
+ 

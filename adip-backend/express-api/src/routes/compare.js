@@ -2,6 +2,7 @@ const router = require('express').Router()
 const { diff } = require('deep-diff')
 const { getResourceConfig } = require('../services/azureResourceService')
 const { getBaseline, saveDriftRecord } = require('../services/blobService')
+const { broadcastDriftEvent } = require('../services/signalrService')
 const { sendDriftAlert } = require('../services/alertService')
 const { explainDrift, reclassifySeverity } = require('../services/aiService')
 
@@ -11,25 +12,64 @@ const CRITICAL_PATHS = ['properties.networkAcls', 'properties.accessPolicies', '
 // Active monitoring sessions: key → intervalId
 const monitoringSessions = {}
 
+
+// ── strip START ──────────────────────────────────────────────────────────────
+// Recursively removes volatile ARM fields before diffing to avoid false positives
 function strip(obj) {
-  if (Array.isArray(obj)) return obj.map(strip)
-  if (obj && typeof obj === 'object') {
-    return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k, v]) => [k, strip(v)]))
+  console.log('[compare.strip] starts')
+  if (Array.isArray(obj)) {
+    const r = obj.map(strip)
+    console.log('[compare.strip] ends — array')
+    return r
   }
+  if (obj && typeof obj === 'object') {
+    const r = Object.fromEntries(
+      Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k, v]) => [k, strip(v)])
+    )
+    console.log('[compare.strip] ends — object')
+    return r
+  }
+  console.log('[compare.strip] ends — primitive')
   return obj
 }
+// ── strip END ────────────────────────────────────────────────────────────────
 
+
+// ── classifySeverity START ───────────────────────────────────────────────────
+// Classifies drift severity based on field type and security-sensitive path rules
 function classifySeverity(differences) {
-  if (!differences.length) return 'none'
-  if (differences.some(d => d.kind === 'D')) return 'critical'
+  console.log('[compare.classifySeverity] starts — differences count:', differences.length)
+  if (!differences.length) {
+    console.log('[compare.classifySeverity] ends — none')
+    return 'none'
+  }
+  if (differences.some(d => d.kind === 'D')) {
+    console.log('[compare.classifySeverity] ends — critical (deletion found)')
+    return 'critical'
+  }
   const tagChanges = differences.filter(d => d.path?.includes('tags'))
-  if (tagChanges.length >= 3) return 'critical'
-  if (differences.some(d => CRITICAL_PATHS.some(p => d.path?.join('.').startsWith(p)))) return 'high'
-  if (differences.length > 5) return 'medium'
+  if (tagChanges.length >= 3) {
+    console.log('[compare.classifySeverity] ends — critical (3+ tag changes)')
+    return 'critical'
+  }
+  if (differences.some(d => CRITICAL_PATHS.some(p => d.path?.join('.').startsWith(p)))) {
+    console.log('[compare.classifySeverity] ends — high')
+    return 'high'
+  }
+  if (differences.length > 5) {
+    console.log('[compare.classifySeverity] ends — medium')
+    return 'medium'
+  }
+  console.log('[compare.classifySeverity] ends — low')
   return 'low'
 }
+// ── classifySeverity END ─────────────────────────────────────────────────────
 
+
+// ── runDriftCheck START ──────────────────────────────────────────────────────
+// Full drift check pipeline: fetches live + baseline, diffs, classifies, runs AI, saves record, alerts
 async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
+  console.log('[runDriftCheck] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupId, 'resourceId:', resourceId)
   const [liveRaw, baseline] = await Promise.all([
     getResourceConfig(subscriptionId, resourceGroupId, resourceId || null),
     getBaseline(subscriptionId, resourceId || resourceGroupId),
@@ -48,7 +88,6 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
     detectedAt: new Date().toISOString(),
   }
   if (differences.length > 0) {
-    // Run AI explanation and re-classification in parallel (non-blocking)
     const [aiExplanation, aiSeverity] = await Promise.all([
       explainDrift(record),
       reclassifySeverity(record),
@@ -58,7 +97,6 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
     if (aiSeverity) {
       record.aiSeverity  = aiSeverity.severity
       record.aiReasoning = aiSeverity.reasoning
-      // Use AI severity if it's more severe than rule-based
       const order = ['none','low','medium','high','critical']
       if (order.indexOf(aiSeverity.severity) > order.indexOf(record.severity)) {
         record.severity = aiSeverity.severity
@@ -69,38 +107,60 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
     broadcastDriftEvent(record)
     sendDriftAlert(record).catch(err => console.error('[Alert]', err.message))
   }
+  console.log('[runDriftCheck] ends — severity:', record.severity, 'changes:', differences.length)
   return record
 }
+// ── runDriftCheck END ────────────────────────────────────────────────────────
 
-// Manual one-shot compare
+
+// ── POST /api/compare START ──────────────────────────────────────────────────
+// Manual one-shot drift comparison: fetches live config, diffs against baseline, returns result
 router.post('/compare', async (req, res) => {
+  console.log('[POST /compare] starts')
   const { subscriptionId, resourceGroupId, resourceId } = req.body
-  if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
+  if (!subscriptionId || !resourceGroupId) {
+    console.log('[POST /compare] ends — missing required fields')
+    return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
+  }
   try {
     const record = await runDriftCheck(subscriptionId, resourceGroupId, resourceId || null)
     res.json(record)
+    console.log('[POST /compare] ends — severity:', record.severity)
   } catch (err) {
+    console.log('[POST /compare] ends — error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })
+// ── POST /api/compare END ────────────────────────────────────────────────────
 
-// Start real-time monitoring (polls every 30s, pushes via Socket.IO)
+
+// ── POST /api/monitor/start START ────────────────────────────────────────────
+// Starts a server-side polling monitor that runs drift checks on a configurable interval
 router.post('/monitor/start', (req, res) => {
-  const { subscriptionId, resourceGroupId, resourceId, intervalMs = 300 } = req.body
-  if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
+  console.log('[POST /monitor/start] starts')
+  const { subscriptionId, resourceGroupId, resourceId, intervalMs = 30000 } = req.body
+  if (!subscriptionId || !resourceGroupId) {
+    console.log('[POST /monitor/start] ends — missing required fields')
+    return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
+  }
 
   const key = `${subscriptionId}:${resourceGroupId}:${resourceId || ''}`
   if (monitoringSessions[key]) clearInterval(monitoringSessions[key])
 
   monitoringSessions[key] = setInterval(async () => {
     try { await runDriftCheck(subscriptionId, resourceGroupId, resourceId || null) } catch (_) {}
-  }, Math.max(intervalMs, 150))
+  }, Math.max(intervalMs, 15000))
 
   res.json({ monitoring: true, key, intervalMs })
+  console.log('[POST /monitor/start] ends — key:', key, 'intervalMs:', intervalMs)
 })
+// ── POST /api/monitor/start END ──────────────────────────────────────────────
 
-// Stop real-time monitoring
+
+// ── POST /api/monitor/stop START ─────────────────────────────────────────────
+// Stops a running server-side monitor session
 router.post('/monitor/stop', (req, res) => {
+  console.log('[POST /monitor/stop] starts')
   const { subscriptionId, resourceGroupId, resourceId } = req.body
   const key = `${subscriptionId}:${resourceGroupId}:${resourceId || ''}`
   if (monitoringSessions[key]) {
@@ -108,6 +168,8 @@ router.post('/monitor/stop', (req, res) => {
     delete monitoringSessions[key]
   }
   res.json({ monitoring: false, key })
+  console.log('[POST /monitor/stop] ends — key:', key)
 })
+// ── POST /api/monitor/stop END ───────────────────────────────────────────────
 
 module.exports = router

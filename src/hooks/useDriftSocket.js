@@ -1,21 +1,30 @@
+// ============================================================
+// FILE: src/hooks/useDriftSocket.js
+// ============================================================
 import { useState, useEffect, useRef, useCallback } from 'react'
-
+ 
 const SOCKET_URL =
   import.meta.env.VITE_SOCKET_URL ??
   import.meta.env.VITE_API_BASE_URL?.replace('/api', '') ??
   null
-
+ 
+ 
+// ── useDriftSocket START ─────────────────────────────────────────────────────
+// React hook that manages the Socket.IO connection and real-time drift event feed
 export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null) {
+  console.log('[useDriftSocket] starts — scope:', scope?.subscriptionId)
   const [changeEvents, setChangeEvents]       = useState([])
   const [socketConnected, setSocketConnected] = useState(false)
   const socketRef      = useRef(null)
   const mountedRef     = useRef(true)
   const isSubmittedRef = useRef(isSubmitted)
-
-  // Keep ref in sync so the socket handler always sees latest value
+ 
   useEffect(() => { isSubmittedRef.current = isSubmitted }, [isSubmitted])
-
+ 
+  // ── addEvent START ───────────────────────────────────────────────────────
+  // Appends a new drift event to the feed, capping the list at 200 entries
   const addEvent = useCallback((event) => {
+    console.log('[addEvent] starts — eventId:', event.eventId)
     setChangeEvents(prev =>
       [...prev, {
         ...event,
@@ -23,53 +32,81 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
         _receivedAt: new Date().toLocaleTimeString(),
       }].slice(-200)
     )
+    console.log('[addEvent] ends')
   }, [])
-
+  // ── addEvent END ─────────────────────────────────────────────────────────
+ 
+  // ── connectSocket START ──────────────────────────────────────────────────
+  // Establishes the Socket.IO connection, subscribes to the scope room, and registers event listeners
   const connectSocket = useCallback(() => {
-    if (!SOCKET_URL || !scope?.subscriptionId) return
+    console.log('[connectSocket] starts — SOCKET_URL:', SOCKET_URL)
+    if (!SOCKET_URL || !scope?.subscriptionId) {
+      console.log('[connectSocket] ends — no URL or subscriptionId')
+      return
+    }
     import('socket.io-client')
       .then(({ io }) => {
         if (!mountedRef.current) return
         socketRef.current?.disconnect()
         const socket = io(SOCKET_URL, { transports: ['websocket'], reconnectionAttempts: 5 })
         socketRef.current = socket
-
+ 
         socket.on('connect', () => {
+          console.log('[socket.connect] starts')
           if (!mountedRef.current) return
           setSocketConnected(true)
           socket.emit('subscribe', {
             subscriptionId: scope.subscriptionId,
             resourceGroup:  scope.resourceGroup || null,
           })
+          console.log('[socket.connect] ends — subscribed to scope:', scope.subscriptionId)
         })
-        socket.on('disconnect',    () => { if (mountedRef.current) setSocketConnected(false) })
-        socket.on('connect_error', () => { if (mountedRef.current) setSocketConnected(false) })
-
+ 
+        socket.on('disconnect', () => {
+          console.log('[socket.disconnect] fires')
+          if (mountedRef.current) setSocketConnected(false)
+        })
+ 
+        socket.on('connect_error', () => {
+          console.log('[socket.connect_error] fires')
+          if (mountedRef.current) setSocketConnected(false)
+        })
+ 
+        // ── resourceChange handler START ───────────────────────────────────
+        // Filters incoming events by scope and gates them behind the isSubmitted flag
         socket.on('resourceChange', (event) => {
+          console.log('[socket.resourceChange] starts — resourceId:', event.resourceId)
           if (!mountedRef.current) return
-
-          // Task 3: Gate — drop events until user has pressed Submit
-          if (!isSubmittedRef.current) return
-
+          if (!isSubmittedRef.current) {
+            console.log('[socket.resourceChange] ends — gated (not submitted)')
+            return
+          }
+ 
           const matchesSub = event.subscriptionId === scope.subscriptionId
           const matchesRG  = !scope.resourceGroup || event.resourceGroup === scope.resourceGroup
-          // If a specific resource is selected, only show events for that resource
           const matchesRes = !scope.resourceId ||
             event.resourceId?.toLowerCase() === scope.resourceId?.toLowerCase() ||
             event.resourceId?.toLowerCase().endsWith(`/${scope.resourceId?.split('/').pop()?.toLowerCase()}`)
-          if (!matchesSub || !matchesRG || !matchesRes) return
-
+ 
+          if (!matchesSub || !matchesRG || !matchesRes) {
+            console.log('[socket.resourceChange] ends — scope mismatch')
+            return
+          }
+ 
           addEvent(event)
-
-          // Task 4: Live config update — merge changed resource into configData
+ 
           if (onConfigUpdate && event.resourceId) {
             onConfigUpdate(event)
           }
+          console.log('[socket.resourceChange] ends — event added')
         })
+        // ── resourceChange handler END ─────────────────────────────────────
       })
       .catch(() => {})
+    console.log('[connectSocket] ends')
   }, [scope?.subscriptionId, scope?.resourceGroup, addEvent, onConfigUpdate])
-
+  // ── connectSocket END ────────────────────────────────────────────────────
+ 
   useEffect(() => {
     mountedRef.current = true
     connectSocket()
@@ -79,8 +116,17 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
       socketRef.current = null
     }
   }, [connectSocket])
-
-  const clearChangeEvents = useCallback(() => setChangeEvents([]), [])
-
+ 
+  // ── clearChangeEvents START ──────────────────────────────────────────────
+  // Resets the drift event feed to empty
+  const clearChangeEvents = useCallback(() => {
+    console.log('[clearChangeEvents] starts')
+    setChangeEvents([])
+    console.log('[clearChangeEvents] ends')
+  }, [])
+  // ── clearChangeEvents END ────────────────────────────────────────────────
+ 
+  console.log('[useDriftSocket] ends — setup complete')
   return { driftEvents: changeEvents, socketConnected, clearDriftEvents: clearChangeEvents }
 }
+// ── useDriftSocket END ───────────────────────────────────────────────────────

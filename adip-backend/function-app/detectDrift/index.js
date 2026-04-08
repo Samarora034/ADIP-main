@@ -10,16 +10,49 @@ const blobService = BlobServiceClient.fromConnectionString(process.env.STORAGE_C
 const baselineCtr = blobService.getContainerClient('baselines')
 const driftCtr    = blobService.getContainerClient('drift-records')
 
+
+// ── blobKey START ────────────────────────────────────────────────────────────
+// Converts a resourceId to a URL-safe blob name using base64url encoding
 function blobKey(resourceId) {
-  return Buffer.from(resourceId).toString('base64url') + '.json'
+  console.log('[detectDrift.blobKey] starts')
+  const key = Buffer.from(resourceId).toString('base64url') + '.json'
+  console.log('[detectDrift.blobKey] ends')
+  return key
 }
+// ── blobKey END ──────────────────────────────────────────────────────────────
+
+
+// ── driftKey START ───────────────────────────────────────────────────────────
+// Creates a timestamp-prefixed drift record blob name for chronological listing
 function driftKey(resourceId, ts) {
-  return `${(ts||new Date().toISOString()).replace(/[:.]/g,'-')}_${Buffer.from(resourceId).toString('base64url')}.json`
+  console.log('[detectDrift.driftKey] starts')
+  const key = `${(ts||new Date().toISOString()).replace(/[:.]/g,'-')}_${Buffer.from(resourceId).toString('base64url')}.json`
+  console.log('[detectDrift.driftKey] ends')
+  return key
 }
+// ── driftKey END ─────────────────────────────────────────────────────────────
+
+
+// ── readBlob START ───────────────────────────────────────────────────────────
+// Downloads and JSON-parses a blob; returns null if the blob does not exist
 async function readBlob(ctr, name) {
-  try { const buf = await ctr.getBlobClient(name).downloadToBuffer(); return JSON.parse(buf.toString()) }
-  catch(e) { if(e.statusCode===404||e.code==='BlobNotFound') return null; throw e }
+  console.log('[detectDrift.readBlob] starts — blob:', name)
+  try {
+    const buf = await ctr.getBlobClient(name).downloadToBuffer()
+    const result = JSON.parse(buf.toString())
+    console.log('[detectDrift.readBlob] ends')
+    return result
+  } catch(e) {
+    if(e.statusCode===404||e.code==='BlobNotFound') {
+      console.log('[detectDrift.readBlob] ends — not found')
+      return null
+    }
+    console.log('[detectDrift.readBlob] ends — unexpected error:', e.message)
+    throw e
+  }
 }
+// ── readBlob END ─────────────────────────────────────────────────────────────
+
 
 const VOLATILE       = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag','primaryEndpoints','secondaryEndpoints','primaryLocation','secondaryLocation','statusOfPrimary','statusOfSecondary','creationTime']
 const CRITICAL_PATHS = ['properties.networkAcls','properties.accessPolicies','properties.securityRules','sku','location','identity','properties.encryption']
@@ -31,31 +64,82 @@ const API_VERSION_MAP = {
   accounts:'2023-11-01', components:'2020-02-02',
 }
 
+
+// ── strip START ──────────────────────────────────────────────────────────────
+// Recursively removes volatile ARM fields to prevent false-positive diffs
 function strip(obj) {
-  if (obj === null || obj === undefined) return obj
-  if (Array.isArray(obj)) return obj.map(strip)
-  if (typeof obj === 'object')
-    return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)]))
+  console.log('[detectDrift.strip] starts')
+  if (obj === null || obj === undefined) {
+    console.log('[detectDrift.strip] ends — null/undefined')
+    return obj
+  }
+  if (Array.isArray(obj)) {
+    const r = obj.map(strip)
+    console.log('[detectDrift.strip] ends — array')
+    return r
+  }
+  if (typeof obj === 'object') {
+    const r = Object.fromEntries(
+      Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)])
+    )
+    console.log('[detectDrift.strip] ends — object')
+    return r
+  }
+  console.log('[detectDrift.strip] ends — primitive')
   return obj
 }
+// ── strip END ────────────────────────────────────────────────────────────────
 
+
+// ── classifySeverity START ───────────────────────────────────────────────────
+// Classifies drift severity using deletion, security-path, tag-count, and field-count rules
 function classifySeverity(diffs) {
-  if (!diffs.length) return 'none'
-  if (diffs.some(d => d.type === 'removed')) return 'critical'
+  console.log('[detectDrift.classifySeverity] starts — diffs count:', diffs.length)
+  if (!diffs.length) {
+    console.log('[detectDrift.classifySeverity] ends — none')
+    return 'none'
+  }
+  if (diffs.some(d => d.type === 'removed')) {
+    console.log('[detectDrift.classifySeverity] ends — critical (removal)')
+    return 'critical'
+  }
   const tagChanges = diffs.filter(d => d.path.includes('tags'))
-  if (tagChanges.length >= 3) return 'critical'
-  if (diffs.some(d => CRITICAL_PATHS.some(p => d.path.startsWith(p)))) return 'high'
-  if (diffs.length > 5) return 'medium'
+  if (tagChanges.length >= 3) {
+    console.log('[detectDrift.classifySeverity] ends — critical (3+ tag changes)')
+    return 'critical'
+  }
+  if (diffs.some(d => CRITICAL_PATHS.some(p => d.path.startsWith(p)))) {
+    console.log('[detectDrift.classifySeverity] ends — high')
+    return 'high'
+  }
+  if (diffs.length > 5) {
+    console.log('[detectDrift.classifySeverity] ends — medium')
+    return 'medium'
+  }
+  console.log('[detectDrift.classifySeverity] ends — low')
   return 'low'
 }
+// ── classifySeverity END ─────────────────────────────────────────────────────
 
+
+// ── safeStr START ────────────────────────────────────────────────────────────
+// Converts any value to a string safely for use in human-readable diff sentences
 function safeStr(val) {
-  if (val === null || val === undefined) return 'null'
-  if (typeof val === 'object') return JSON.stringify(val)
-  return String(val)
+  console.log('[detectDrift.safeStr] starts')
+  let result
+  if (val === null || val === undefined) result = 'null'
+  else if (typeof val === 'object') result = JSON.stringify(val)
+  else result = String(val)
+  console.log('[detectDrift.safeStr] ends')
+  return result
 }
+// ── safeStr END ──────────────────────────────────────────────────────────────
 
+
+// ── computeDiff START ────────────────────────────────────────────────────────
+// Recursive diff engine that detects added, removed, modified, and array changes
 function computeDiff(prev, curr, path, results) {
+  console.log('[detectDrift.computeDiff] starts — path:', path)
   if (prev === null || prev === undefined) {
     if (curr !== null && curr !== undefined) {
       if (typeof curr === 'object' && !Array.isArray(curr)) {
@@ -67,11 +151,13 @@ function computeDiff(prev, curr, path, results) {
           sentence: `added "${path.split(' → ').pop()}" = ${safeStr(curr)}` })
       }
     }
+    console.log('[detectDrift.computeDiff] ends — prev null/undefined')
     return
   }
   if (curr === null || curr === undefined) {
     results.push({ path, type: 'removed', oldValue: prev, newValue: null,
       sentence: `removed "${path.split(' → ').pop()}" (was ${safeStr(prev)})` })
+    console.log('[detectDrift.computeDiff] ends — curr null/undefined (removed)')
     return
   }
 
@@ -91,6 +177,7 @@ function computeDiff(prev, curr, path, results) {
         results.push({ path, type: 'array-reordered', oldValue: prev, newValue: curr,
           sentence: `reordered items in "${path.split(' → ').pop()}"` })
     }
+    console.log('[detectDrift.computeDiff] ends — arrays compared')
     return
   }
 
@@ -99,6 +186,7 @@ function computeDiff(prev, curr, path, results) {
     for (const k of allKeys) {
       computeDiff(prev[k], curr[k], path ? `${path} → ${k}` : k, results)
     }
+    console.log('[detectDrift.computeDiff] ends — objects recursed')
     return
   }
 
@@ -112,26 +200,50 @@ function computeDiff(prev, curr, path, results) {
         : `changed "${field}" from "${safeStr(prev)}" to "${safeStr(curr)}"`,
     })
   }
+  console.log('[detectDrift.computeDiff] ends — primitives compared')
 }
+// ── computeDiff END ──────────────────────────────────────────────────────────
 
+
+// ── normalize START ──────────────────────────────────────────────────────────
+// Flattens _childConfig into the top-level to ensure baselines diff cleanly against enriched live state
 function normalize(obj) {
-  if (!obj || typeof obj !== 'object') return obj
+  console.log('[detectDrift.normalize] starts')
+  if (!obj || typeof obj !== 'object') {
+    console.log('[detectDrift.normalize] ends — not an object')
+    return obj
+  }
   const { _childConfig, ...rest } = obj
   if (_childConfig) Object.entries(_childConfig).forEach(([k, v]) => { rest[k] = v })
+  console.log('[detectDrift.normalize] ends')
   return rest
 }
+// ── normalize END ────────────────────────────────────────────────────────────
 
+
+// ── diffObjects START ────────────────────────────────────────────────────────
+// Runs the full diff pipeline: normalise → computeDiff → filter empty paths
 function diffObjects(prev, curr) {
+  console.log('[detectDrift.diffObjects] starts')
   const results = []
   computeDiff(normalize(prev), normalize(curr), '', results)
-  return results.filter(r => r.path !== '')
+  const filtered = results.filter(r => r.path !== '')
+  console.log('[detectDrift.diffObjects] ends — changes:', filtered.length)
+  return filtered
 }
+// ── diffObjects END ──────────────────────────────────────────────────────────
 
-// ── Direct email alert (no Express dependency) ────────────────────────────────
+
+// ── sendAlertEmail START ─────────────────────────────────────────────────────
+// Sends a drift alert email directly from the Function App (bypasses Express for critical/high)
 async function sendAlertEmail(record) {
+  console.log('[detectDrift.sendAlertEmail] starts — severity:', record.severity)
   const connStr    = process.env.COMMS_CONNECTION_STRING
   const recipients = (process.env.ALERT_RECIPIENT_EMAIL || '').split(',').map(e => e.trim()).filter(Boolean)
-  if (!connStr || !recipients.length || !['critical', 'high'].includes(record.severity)) return
+  if (!connStr || !recipients.length || !['critical', 'high'].includes(record.severity)) {
+    console.log('[detectDrift.sendAlertEmail] ends — skipped')
+    return
+  }
   try {
     const client       = new EmailClient(connStr)
     const resourceName = record.resourceId?.split('/').pop() ?? record.resourceId
@@ -154,16 +266,24 @@ async function sendAlertEmail(record) {
       },
     })
     await poller.pollUntilDone()
-  } catch (_) { /* non-fatal */ }
+    console.log('[detectDrift.sendAlertEmail] ends — email sent to:', recipients.join(', '))
+  } catch (_) {
+    console.log('[detectDrift.sendAlertEmail] ends — email failed (non-fatal)')
+  }
 }
+// ── sendAlertEmail END ───────────────────────────────────────────────────────
 
-// ── Main handler ──────────────────────────────────────────────────────────────
+
+// ── Main handler START ───────────────────────────────────────────────────────
+// Azure Function entry point: validates input, fetches live config, diffs, stores record, alerts
 module.exports = async function (context, req) {
+  console.log('[detectDrift main handler] starts')
   const body = req.body
 
   // Event Grid validation handshake
   if (Array.isArray(body) && body[0]?.eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent') {
     context.res = { status: 200, body: { validationResponse: body[0].data.validationCode } }
+    console.log('[detectDrift main handler] ends — validation handshake')
     return
   }
 
@@ -171,6 +291,7 @@ module.exports = async function (context, req) {
   const { resourceId, subscriptionId } = eventData || {}
   if (!resourceId || !subscriptionId) {
     context.res = { status: 400, body: { error: 'resourceId and subscriptionId required' } }
+    console.log('[detectDrift main handler] ends — missing required fields')
     return
   }
 
@@ -185,12 +306,12 @@ module.exports = async function (context, req) {
 
     if (!rgName || !provider || !type || !name) {
       context.res = { status: 400, body: { error: 'Invalid resourceId: ' + resourceId } }
+      console.log('[detectDrift main handler] ends — invalid resourceId')
       return
     }
 
     const apiVersion = API_VERSION_MAP[type.toLowerCase()] || '2021-04-01'
 
-    // Fetch live config from ARM
     const liveRaw = await armClient.resources.get(rgName, provider, '', type, name, apiVersion)
     const live    = strip(liveRaw)
 
@@ -202,6 +323,7 @@ module.exports = async function (context, req) {
 
     if (changes.length === 0) {
       context.res = { status: 200, body: { drifted: false, changeCount: 0 } }
+      console.log('[detectDrift main handler] ends — no drift detected')
       return
     }
 
@@ -217,15 +339,12 @@ module.exports = async function (context, req) {
       detectedAt,
     }
 
-    // Write drift record to Blob Storage
     const driftBody = JSON.stringify(record)
     await driftCtr.getBlockBlobClient(driftKey(resourceId, detectedAt))
       .upload(driftBody, Buffer.byteLength(driftBody), { blobHTTPHeaders: { blobContentType: 'application/json' } })
 
-    // Send alert email directly (no Express dependency)
     sendAlertEmail(record).catch(() => {})
 
-    // Also notify Express API if configured (for real-time Socket.IO feed)
     const apiUrl = process.env.EXPRESS_API_URL
     if (apiUrl) {
       await fetch(`${apiUrl}/internal/drift-event`, {
@@ -235,8 +354,11 @@ module.exports = async function (context, req) {
     }
 
     context.res = { status: 200, body: { drifted: true, ...record } }
+    console.log('[detectDrift main handler] ends — drift detected, severity:', severity, 'changes:', changes.length)
   } catch (err) {
     context.log.error('detectDrift error:', err.message)
     context.res = { status: 500, body: { error: err.message } }
+    console.log('[detectDrift main handler] ends — error:', err.message)
   }
 }
+// ── Main handler END ─────────────────────────────────────────────────────────

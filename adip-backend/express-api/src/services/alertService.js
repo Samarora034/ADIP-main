@@ -3,16 +3,27 @@ const { EmailClient } = require('@azure/communication-email')
 const ALERT_LEVELS = ['critical', 'high']
 let emailClient = null
 
+// ── getEmailClient START ─────────────────────────────────────────────────────
+// Lazily initialises and returns a singleton EmailClient using the connection string from env
 function getEmailClient() {
+  console.log('[getEmailClient] starts')
   if (!emailClient && process.env.COMMS_CONNECTION_STRING) {
     emailClient = new EmailClient(process.env.COMMS_CONNECTION_STRING)
   }
+  console.log('[getEmailClient] ends')
   return emailClient
 }
+// ── getEmailClient END ───────────────────────────────────────────────────────
 
-// Task 1: Convert diff array into a clean HTML table
+
+// ── buildDiffTable START ─────────────────────────────────────────────────────
+// Converts the diff array into an HTML table showing property, change type, old value, and new value
 function buildDiffTable(changes) {
-  if (!changes?.length) return ''
+  console.log('[buildDiffTable] starts')
+  if (!changes?.length) {
+    console.log('[buildDiffTable] ends — no changes')
+    return ''
+  }
   const typeColor = { modified: '#d97706', added: '#16a34a', removed: '#dc2626', 'array-added': '#16a34a', 'array-removed': '#dc2626' }
   const rows = changes.map(c => {
     const color  = typeColor[c.type] || '#6b7280'
@@ -30,7 +41,7 @@ function buildDiffTable(changes) {
       </tr>`
   }).join('')
 
-  return `
+  const result = `
     <div style="margin-top:20px">
       <p style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px">What Changed:</p>
       <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden">
@@ -45,11 +56,16 @@ function buildDiffTable(changes) {
         <tbody>${rows}</tbody>
       </table>
     </div>`
+  console.log('[buildDiffTable] ends')
+  return result
 }
+// ── buildDiffTable END ───────────────────────────────────────────────────────
 
-// Task 2 & 3: Approve/Reject buttons call back to Express API
-// Express API handles the decision and triggers remediation or baseline update
+
+// ── buildApprovalButtons START ───────────────────────────────────────────────
+// Generates HTML approve/reject buttons with a base64url-encoded token linking back to the Express API
 function buildApprovalButtons(record, baseUrl) {
+  console.log('[buildApprovalButtons] starts')
   const token = Buffer.from(JSON.stringify({
     resourceId:     record.resourceId,
     resourceGroup:  record.resourceGroup,
@@ -60,7 +76,7 @@ function buildApprovalButtons(record, baseUrl) {
   const approveUrl = `${baseUrl}/api/remediate-decision?action=approve&token=${token}`
   const rejectUrl  = `${baseUrl}/api/remediate-decision?action=reject&token=${token}`
 
-  return `
+  const result = `
     <div style="margin-top:24px;padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">
       <p style="font-size:13px;font-weight:600;color:#166534;margin:0 0 12px">
         Action Required — Approve or Reject Remediation
@@ -80,26 +96,36 @@ function buildApprovalButtons(record, baseUrl) {
         </a>
       </div>
     </div>`
+  console.log('[buildApprovalButtons] ends')
+  return result
 }
+// ── buildApprovalButtons END ─────────────────────────────────────────────────
 
+
+// ── sendDriftAlert START ─────────────────────────────────────────────────────
+// Sends an HTML drift alert email with diff table and approve/reject buttons to configured recipients
 async function sendDriftAlert(record) {
+  console.log('[sendDriftAlert] starts')
   const recipients = (process.env.ALERT_RECIPIENT_EMAIL || '')
     .split(',').map(e => e.trim()).filter(Boolean)
-  if (!recipients.length || !ALERT_LEVELS.includes(record.severity)) return
+  if (!recipients.length || !ALERT_LEVELS.includes(record.severity)) {
+    console.log('[sendDriftAlert] ends — skipped (no recipients or non-alertable severity)')
+    return
+  }
 
   const client = getEmailClient()
-  if (!client) return
+  if (!client) {
+    console.log('[sendDriftAlert] ends — no email client')
+    return
+  }
 
   const resourceName  = record.resourceId?.split('/').pop() ?? record.resourceId
   const severityColor = record.severity === 'critical' ? '#dc2626' : '#d97706'
   const severityLabel = record.severity.toUpperCase()
   const baseUrl       = process.env.EXPRESS_PUBLIC_URL || process.env.EXPRESS_API_URL?.replace('/api','') || 'http://localhost:3001'
 
-  // Task 1: build diff table from changes array (from hardened diff engine)
   const changes   = record.differences || record.changes || []
   const diffTable = buildDiffTable(changes)
-
-  // Task 2: build approval buttons with signed token
   const approvalButtons = buildApprovalButtons(record, baseUrl)
 
   const htmlBody = `
@@ -154,6 +180,8 @@ async function sendDriftAlert(record) {
   } catch (err) {
     console.error('[Alert] Email send failed:', err.message)
   }
+  console.log('[sendDriftAlert] ends')
 }
+// ── sendDriftAlert END ───────────────────────────────────────────────────────
 
 module.exports = { sendDriftAlert }

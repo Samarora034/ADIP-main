@@ -3,17 +3,16 @@ const { DefaultAzureCredential } = require('@azure/identity')
 
 const credential = new DefaultAzureCredential()
 
-/**
- * Get policy compliance state for a specific resource or resource group.
- * Returns array of non-compliant policy assignments with details.
- */
+
+// ── getPolicyCompliance START ────────────────────────────────────────────────
+// Queries Azure Policy compliance state for a specific resource or resource group (read-only)
 async function getPolicyCompliance(subscriptionId, resourceGroupName, resourceId = null) {
+  console.log('[getPolicyCompliance] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupName, 'resourceId:', resourceId)
   const client = new PolicyInsightsClient(credential, subscriptionId)
 
   const results = []
 
   if (resourceId) {
-    // Query compliance for a specific resource
     const parts    = resourceId.split('/')
     const provider = parts[6]
     const type     = parts[7]
@@ -27,7 +26,6 @@ async function getPolicyCompliance(subscriptionId, resourceGroupName, resourceId
       results.push(formatState(state))
     }
   } else {
-    // Query compliance for entire resource group
     for await (const state of client.policyStates.listQueryResultsForResourceGroup(
       'latest', subscriptionId, resourceGroupName, { queryOptions: { top: 100 } }
     )) {
@@ -38,25 +36,35 @@ async function getPolicyCompliance(subscriptionId, resourceGroupName, resourceId
   const nonCompliant = results.filter(r => r.complianceState === 'NonCompliant')
   const compliant    = results.filter(r => r.complianceState === 'Compliant')
 
-  return {
+  const result = {
     total:        results.length,
     nonCompliant: nonCompliant.length,
     compliant:    compliant.length,
     summary:      nonCompliant.length === 0 ? 'compliant' : 'non-compliant',
     violations:   nonCompliant,
   }
+  console.log('[getPolicyCompliance] ends — total:', results.length, 'nonCompliant:', nonCompliant.length)
+  return result
 }
+// ── getPolicyCompliance END ──────────────────────────────────────────────────
 
+
+// ── formatState START ────────────────────────────────────────────────────────
+// Maps a raw PolicyInsights state object to a clean, serialisable result shape
 function formatState(state) {
-  return {
-    complianceState:      state.complianceState,
-    policyAssignmentName: state.policyAssignmentName,
-    policyDefinitionName: state.policyDefinitionName,
+  console.log('[formatState] starts')
+  const result = {
+    complianceState:        state.complianceState,
+    policyAssignmentName:   state.policyAssignmentName,
+    policyDefinitionName:   state.policyDefinitionName,
     policyDefinitionAction: state.policyDefinitionAction,
-    resourceId:           state.resourceId,
-    resourceType:         state.resourceType,
-    timestamp:            state.timestamp,
+    resourceId:             state.resourceId,
+    resourceType:           state.resourceType,
+    timestamp:              state.timestamp,
   }
+  console.log('[formatState] ends — state:', result.complianceState)
+  return result
 }
+// ── formatState END ──────────────────────────────────────────────────────────
 
 module.exports = { getPolicyCompliance }

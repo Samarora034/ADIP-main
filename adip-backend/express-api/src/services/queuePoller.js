@@ -3,46 +3,72 @@ const { getResourceConfig }  = require('./azureResourceService')
 
 let queueClient = null
 
+// ── getQueueClient START ─────────────────────────────────────────────────────
+// Lazily creates and returns the Storage Queue client singleton
 function getQueueClient() {
+  console.log('[getQueueClient] starts')
   if (!queueClient) {
     const svc = QueueServiceClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING)
     queueClient = svc.getQueueClient(process.env.STORAGE_QUEUE_NAME || 'resource-changes')
   }
+  console.log('[getQueueClient] ends')
   return queueClient
 }
+// ── getQueueClient END ───────────────────────────────────────────────────────
+
 
 // Identity cache: resolves object IDs to display names via Azure AD
 const _identityCache = {}
+
+// ── resolveIdentity START ────────────────────────────────────────────────────
+// Resolves an Azure AD object ID (GUID) to a human-readable display name using az CLI
 async function resolveIdentity(caller) {
-  if (!caller) return null
-  // Already a human-readable name (contains space or @)
-  if (caller.includes(' ') || caller.includes('@')) return caller
-  // GUID object ID — look up in Azure AD
-  if (_identityCache[caller] !== undefined) return _identityCache[caller]
+  console.log('[resolveIdentity] starts — caller:', caller)
+  if (!caller) {
+    console.log('[resolveIdentity] ends — no caller provided')
+    return null
+  }
+  if (caller.includes(' ') || caller.includes('@')) {
+    console.log('[resolveIdentity] ends — already a display name')
+    return caller
+  }
+  if (_identityCache[caller] !== undefined) {
+    console.log('[resolveIdentity] ends — found in cache')
+    return _identityCache[caller]
+  }
   try {
     const { execSync } = require('child_process')
-    // Try user first, then service principal
     let name = null
     try { name = execSync(`az ad user show --id ${caller} --query displayName -o tsv 2>/dev/null`, { timeout: 5000 }).toString().trim() } catch {}
     if (!name) try { name = execSync(`az ad sp show --id ${caller} --query displayName -o tsv 2>/dev/null`, { timeout: 5000 }).toString().trim() } catch {}
     _identityCache[caller] = name || caller
+    console.log('[resolveIdentity] ends — resolved to:', _identityCache[caller])
     return _identityCache[caller]
-  } catch { _identityCache[caller] = caller; return caller }
+  } catch {
+    _identityCache[caller] = caller
+    console.log('[resolveIdentity] ends — fallback to raw caller')
+    return caller
+  }
 }
+// ── resolveIdentity END ──────────────────────────────────────────────────────
 
+
+// ── parseMessage START ───────────────────────────────────────────────────────
+// Decodes a base64 Storage Queue message and extracts structured event fields
 function parseMessage(msg) {
+  console.log('[parseMessage] starts')
   try {
     const decoded     = Buffer.from(msg.messageText, 'base64').toString('utf-8')
     const parsed      = JSON.parse(decoded)
     const event       = Array.isArray(parsed) ? parsed[0] : parsed
     let resourceUri = event.data?.resourceUri || event.subject || ''
-    // Normalize child resource URIs to parent (e.g. blobServices/default -> storageAccounts/foo)
+    // Normalise child resource URIs to parent resource (>9 path segments = child resource)
     const uriParts = resourceUri.split('/')
     if (uriParts.length > 9) resourceUri = uriParts.slice(0, 9).join('/')
     const parts = resourceUri.split('/')
     const resourceGroup = parts.length >= 5 ? parts[4] : (event.data?.resourceGroupName || '')
 
-    // Extract caller: try all known claim paths for display name
+    // Extract caller display name from all known claim paths
     const claims = event.data?.claims || {}
     const givenName = claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname'] || ''
     const surname   = claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname'] || ''
@@ -55,11 +81,10 @@ function parseMessage(msg) {
                    || event.data?.caller
                    || ''
 
-    return {
+    const result = {
       eventId:        event.id,
       eventType:      event.eventType,
       subject:        event.subject,
-      // Task 3: use Azure eventTime, not frontend render time
       eventTime:      event.eventTime || new Date().toISOString(),
       resourceId:     resourceUri,
       subscriptionId: parts[2] || event.data?.subscriptionId || '',
@@ -68,25 +93,58 @@ function parseMessage(msg) {
       status:         event.data?.status || 'Succeeded',
       caller,
     }
-  } catch { return null }
+    console.log('[parseMessage] ends — resourceId:', result.resourceId)
+    return result
+  } catch {
+    console.log('[parseMessage] ends — parse failed, returning null')
+    return null
+  }
 }
+// ── parseMessage END ─────────────────────────────────────────────────────────
+
 
 const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag','primaryEndpoints','secondaryEndpoints','primaryLocation','secondaryLocation','statusOfPrimary','statusOfSecondary','creationTime']
+
+// ── strip START ──────────────────────────────────────────────────────────────
+// Recursively removes volatile ARM fields from an object to prevent false-positive diffs
 function strip(obj) {
-  if (Array.isArray(obj)) return obj.map(strip)
-  if (obj && typeof obj === 'object')
-    return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)]))
+  console.log('[strip] starts')
+  if (Array.isArray(obj)) {
+    const result = obj.map(strip)
+    console.log('[strip] ends — array')
+    return result
+  }
+  if (obj && typeof obj === 'object') {
+    const result = Object.fromEntries(
+      Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)])
+    )
+    console.log('[strip] ends — object')
+    return result
+  }
+  console.log('[strip] ends — primitive')
   return obj
 }
+// ── strip END ────────────────────────────────────────────────────────────────
 
-// Hardened recursive diff engine — handles nested objects, arrays, null transitions
+
+// ── safeStr START ────────────────────────────────────────────────────────────
+// Safely converts any value to a string for use in diff sentences
 function safeStr(val) {
-  if (val === null || val === undefined) return 'null'
-  if (typeof val === 'object') return JSON.stringify(val)
-  return String(val)
+  console.log('[safeStr] starts')
+  let result
+  if (val === null || val === undefined) result = 'null'
+  else if (typeof val === 'object') result = JSON.stringify(val)
+  else result = String(val)
+  console.log('[safeStr] ends')
+  return result
 }
+// ── safeStr END ──────────────────────────────────────────────────────────────
 
+
+// ── computeDiff START ────────────────────────────────────────────────────────
+// Recursive diff engine that handles nested objects, arrays, null transitions, and primitive changes
 function computeDiff(prev, curr, path, results) {
+  console.log('[computeDiff] starts — path:', path)
   if (prev === null || prev === undefined) {
     if (curr !== null && curr !== undefined) {
       if (typeof curr === 'object' && !Array.isArray(curr)) {
@@ -98,6 +156,7 @@ function computeDiff(prev, curr, path, results) {
           sentence: isTag ? `added tag '${field}' = "${curr}"` : `added "${field}" = ${safeStr(curr)}` })
       }
     }
+    console.log('[computeDiff] ends — prev was null/undefined')
     return
   }
   if (curr === null || curr === undefined) {
@@ -105,6 +164,7 @@ function computeDiff(prev, curr, path, results) {
     const isTag = path.includes('tags')
     results.push({ path, type: 'removed', oldValue: prev, newValue: null,
       sentence: isTag ? `deleted tag '${field}'` : `removed "${field}" (was ${safeStr(prev)})` })
+    console.log('[computeDiff] ends — curr is null/undefined (removed)')
     return
   }
   if (Array.isArray(prev) && Array.isArray(curr)) {
@@ -118,11 +178,13 @@ function computeDiff(prev, curr, path, results) {
       if (removed.length) results.push({ path, type: 'array-removed', oldValue: prev, newValue: curr, sentence: `removed ${removed.length} item(s) from "${field}"` })
       if (!added.length && !removed.length) results.push({ path, type: 'array-reordered', oldValue: prev, newValue: curr, sentence: `reordered items in "${field}"` })
     }
+    console.log('[computeDiff] ends — arrays compared')
     return
   }
   if (typeof prev === 'object' && typeof curr === 'object') {
     const allKeys = new Set([...Object.keys(prev), ...Object.keys(curr)])
     for (const k of allKeys) computeDiff(prev[k], curr[k], path ? `${path} → ${k}` : k, results)
+    console.log('[computeDiff] ends — objects recursed')
     return
   }
   if (prev !== curr) {
@@ -131,67 +193,135 @@ function computeDiff(prev, curr, path, results) {
     results.push({ path, type: 'modified', oldValue: prev, newValue: curr,
       sentence: isTag ? `changed tag '${field}' from "${prev}" to "${curr}"` : `changed "${field}" from "${safeStr(prev)}" to "${safeStr(curr)}"` })
   }
+  console.log('[computeDiff] ends — primitives compared')
 }
+// ── computeDiff END ──────────────────────────────────────────────────────────
 
-// Flatten _childConfig into top-level so baseline (without _childConfig) diffs cleanly
+
+// ── normalize START ──────────────────────────────────────────────────────────
+// Flattens _childConfig into the top-level object so baselines without child config diff cleanly
 function normalize(obj) {
-  if (!obj || typeof obj !== 'object') return obj
+  console.log('[normalize] starts')
+  if (!obj || typeof obj !== 'object') {
+    console.log('[normalize] ends — not an object')
+    return obj
+  }
   const { _childConfig, ...rest } = obj
   if (_childConfig) {
     Object.entries(_childConfig).forEach(([k, v]) => { rest[k] = v })
   }
+  console.log('[normalize] ends')
   return rest
 }
+// ── normalize END ────────────────────────────────────────────────────────────
 
+
+// ── formatDiff START ─────────────────────────────────────────────────────────
+// Runs the full diff pipeline: normalise both states, compute changes, filter empty paths
 function formatDiff(prev, curr) {
+  console.log('[formatDiff] starts')
   const results = []
   computeDiff(normalize(prev), normalize(curr), '', results)
-  return results.filter(r => r.path !== '')
+  const filtered = results.filter(r => r.path !== '')
+  console.log('[formatDiff] ends — found', filtered.length, 'changes')
+  return filtered
 }
+// ── formatDiff END ───────────────────────────────────────────────────────────
+
 
 // liveStateCache — persisted to Azure Table Storage so restarts don't lose state
-// Falls back to in-memory if Table Storage is unavailable
 const { TableClient } = require('@azure/data-tables')
 const _memCache = {}
 
+// ── getTableClient START ─────────────────────────────────────────────────────
+// Returns an Azure Table Storage client for the liveStateCache table
 function getTableClient() {
-  try { return TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'liveStateCache') }
-  catch { return null }
+  console.log('[getTableClient] starts')
+  try {
+    const client = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'liveStateCache')
+    console.log('[getTableClient] ends')
+    return client
+  } catch {
+    console.log('[getTableClient] ends — failed, returning null')
+    return null
+  }
 }
+// ── getTableClient END ───────────────────────────────────────────────────────
 
-// Safe base64 key from resourceId (table row keys can't have / \ # ?)
-function cacheKey(resourceId) { return Buffer.from(resourceId).toString('base64').replace(/[/\\#?]/g, '_') }
 
+// ── cacheKey START ───────────────────────────────────────────────────────────
+// Converts a resourceId into a Table Storage-safe row key (base64, no special chars)
+function cacheKey(resourceId) {
+  console.log('[cacheKey] starts')
+  const key = Buffer.from(resourceId).toString('base64').replace(/[/\\#?]/g, '_')
+  console.log('[cacheKey] ends')
+  return key
+}
+// ── cacheKey END ─────────────────────────────────────────────────────────────
+
+
+// ── cacheGet START ───────────────────────────────────────────────────────────
+// Retrieves a cached resource state from memory (primary) or Azure Table Storage (fallback)
 async function cacheGet(resourceId) {
-  if (_memCache[resourceId]) return _memCache[resourceId]
+  console.log('[cacheGet] starts — resourceId:', resourceId)
+  if (_memCache[resourceId]) {
+    console.log('[cacheGet] ends — found in memory cache')
+    return _memCache[resourceId]
+  }
   try {
     const client = getTableClient()
-    if (!client) return null
+    if (!client) {
+      console.log('[cacheGet] ends — no table client')
+      return null
+    }
     const entity = await client.getEntity('state', cacheKey(resourceId))
     const val = JSON.parse(entity.stateJson)
     _memCache[resourceId] = val
+    console.log('[cacheGet] ends — loaded from Table Storage')
     return val
-  } catch { return null }
+  } catch {
+    console.log('[cacheGet] ends — not found in Table Storage')
+    return null
+  }
 }
+// ── cacheGet END ─────────────────────────────────────────────────────────────
 
+
+// ── cacheSet START ───────────────────────────────────────────────────────────
+// Writes a resource state to both the in-memory cache and Azure Table Storage
 async function cacheSet(resourceId, state) {
+  console.log('[cacheSet] starts — resourceId:', resourceId)
   _memCache[resourceId] = state
   try {
     const client = getTableClient()
-    if (!client) return
+    if (!client) {
+      console.log('[cacheSet] ends — no table client, mem-only')
+      return
+    }
     await client.upsertEntity({ partitionKey: 'state', rowKey: cacheKey(resourceId), stateJson: JSON.stringify(state) }, 'Replace')
-  } catch { /* non-fatal — mem cache still works */ }
+    console.log('[cacheSet] ends — persisted to Table Storage')
+  } catch {
+    console.log('[cacheSet] ends — Table Storage write failed, mem cache still updated')
+  }
 }
+// ── cacheSet END ─────────────────────────────────────────────────────────────
 
-// Proxy object so existing code using liveStateCache[id] = x still works
+
+// Proxy so existing code using liveStateCache[id] = x triggers cacheSet automatically
 const liveStateCache = new Proxy(_memCache, {
   set(target, key, value) { target[key] = value; cacheSet(key, value).catch(() => {}); return true },
   get(target, key) { return target[key] }
 })
 
+
+// ── enrichWithDiff START ─────────────────────────────────────────────────────
+// Fetches the live resource config, diffs against cached/baseline state, auto-saves genome snapshot on changes
 async function enrichWithDiff(event) {
-  if (!event.resourceId || !event.subscriptionId || !event.resourceGroup) return event
-  // Resolve caller identity (GUID -> display name) in parallel with config fetch
+  console.log('[enrichWithDiff] starts — resourceId:', event.resourceId)
+  if (!event.resourceId || !event.subscriptionId || !event.resourceGroup) {
+    console.log('[enrichWithDiff] ends — missing required fields')
+    return event
+  }
   const callerPromise = resolveIdentity(event.caller)
   try {
     const liveRaw = await getResourceConfig(event.subscriptionId, event.resourceGroup, event.resourceId)
@@ -199,7 +329,6 @@ async function enrichWithDiff(event) {
 
     let previous = await cacheGet(event.resourceId) || null
 
-    // If no cached previous state, fall back to stored baseline so we always show a diff
     if (!previous) {
       try {
         const { getBaseline } = require('./blobService')
@@ -210,10 +339,8 @@ async function enrichWithDiff(event) {
 
     const changes = previous ? formatDiff(previous, current) : []
 
-    // Always update cache after fetching
     liveStateCache[event.resourceId] = current
 
-    // Auto-save to genome on every real change event
     if (changes.length > 0) {
       try {
         const { saveGenomeSnapshot } = require('./blobService')
@@ -223,7 +350,7 @@ async function enrichWithDiff(event) {
     }
 
     const resolvedCaller = await callerPromise
-    return {
+    const enriched = {
       ...event,
       caller:      resolvedCaller || event.caller || 'System',
       liveState:   current,
@@ -231,24 +358,42 @@ async function enrichWithDiff(event) {
       changeCount: changes.length,
       hasPrevious: !!previous,
     }
+    console.log('[enrichWithDiff] ends — changes:', changes.length)
+    return enriched
   } catch {
+    console.log('[enrichWithDiff] ends — error, returning raw event')
     return event
   }
 }
+// ── enrichWithDiff END ───────────────────────────────────────────────────────
+
+
 // Deduplication: same resource + operation within 10s = same change event
-const dedupCache = new Map() // key -> timestamp
+const dedupCache = new Map()
+
+// ── isDuplicate START ────────────────────────────────────────────────────────
+// Returns true if an identical event was already processed within the last 10 seconds
 function isDuplicate(event) {
-  const bucket = Math.floor(new Date(event.eventTime).getTime() / 10000) // 10s buckets
+  console.log('[isDuplicate] starts — resourceId:', event.resourceId)
+  const bucket = Math.floor(new Date(event.eventTime).getTime() / 10000)
   const key    = `${event.resourceId}:${event.operationName}:${bucket}`
-  if (dedupCache.has(key)) return true
+  if (dedupCache.has(key)) {
+    console.log('[isDuplicate] ends — IS duplicate')
+    return true
+  }
   dedupCache.set(key, Date.now())
-  // Evict entries older than 60s
   const cutoff = Date.now() - 60000
   for (const [k, ts] of dedupCache) { if (ts < cutoff) dedupCache.delete(k) }
+  console.log('[isDuplicate] ends — not a duplicate')
   return false
 }
+// ── isDuplicate END ──────────────────────────────────────────────────────────
 
+
+// ── startQueuePoller START ───────────────────────────────────────────────────
+// Starts the Storage Queue polling loop — runs every QUEUE_POLL_INTERVAL_MS milliseconds
 function startQueuePoller() {
+  console.log('[startQueuePoller] starts')
   const interval = parseInt(process.env.QUEUE_POLL_INTERVAL_MS || '5000', 10)
   const client   = getQueueClient()
 
@@ -271,7 +416,8 @@ function startQueuePoller() {
     } catch (_) {}
   }, interval)
 
-  console.log(`Queue poller started — polling every ${interval}ms`)
+  console.log(`[startQueuePoller] ends — polling every ${interval}ms`)
 }
+// ── startQueuePoller END ─────────────────────────────────────────────────────
 
 module.exports = { startQueuePoller, liveStateCache, cacheSet }

@@ -13,12 +13,19 @@ const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: '*' } })
 global.io = io
 
+// ── io.on connection START ───────────────────────────────────────────────────
+// Handles new Socket.IO client connections and joins them to the appropriate subscription/RG room
 io.on('connection', (socket) => {
+  console.log('[io.connection] starts — socketId:', socket.id)
   socket.on('subscribe', ({ subscriptionId, resourceGroup }) => {
+    console.log('[io.subscribe] starts — subscriptionId:', subscriptionId, 'resourceGroup:', resourceGroup)
     const room = resourceGroup ? `${subscriptionId}:${resourceGroup}` : subscriptionId
     socket.join(room)
+    console.log('[io.subscribe] ends — joined room:', room)
   })
+  console.log('[io.connection] ends')
 })
+// ── io.on connection END ─────────────────────────────────────────────────────
 
 app.use(cors())
 app.use(express.json())
@@ -40,31 +47,77 @@ app.use('/api', require('./routes/remediateRequest'))
 app.use('/api', require('./routes/ai'))
 app.use('/api', require('./routes/genome'))
 
-// Alert email endpoint — called by Logic App or directly
+
+// ── POST /api/alert/email START ──────────────────────────────────────────────
+// Receives a drift record from the Logic App and triggers the email alert pipeline
 app.post('/api/alert/email', express.json(), async (req, res) => {
+  console.log('[POST /api/alert/email] starts')
   const { sendDriftAlert } = require('./services/alertService')
   await sendDriftAlert(req.body).catch(() => {})
   res.json({ sent: true })
+  console.log('[POST /api/alert/email] ends')
 })
+// ── POST /api/alert/email END ────────────────────────────────────────────────
 
-// Task 1: seed the live state cache so the next change event has a "previous" state
-// Called by frontend immediately after config is loaded on Submit
+
+// ── POST /api/cache-state START ──────────────────────────────────────────────
+// Seeds the live state cache with the current resource config so the first change event has a diff
 app.post('/api/cache-state', express.json(), (req, res) => {
+  console.log('[POST /api/cache-state] starts')
   const { resourceId, state } = req.body
-  if (!resourceId || !state) return res.status(400).json({ error: 'resourceId and state required' })
+  if (!resourceId || !state) {
+    console.log('[POST /api/cache-state] ends — missing resourceId or state')
+    return res.status(400).json({ error: 'resourceId and state required' })
+  }
   const { liveStateCache, cacheSet } = require('./services/queuePoller')
   const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag']
+
+  // ── strip (inline) START ───────────────────────────────────────────────────
+  // Strips volatile fields from the state before caching to avoid false-positive diffs
   function strip(obj) {
-    if (Array.isArray(obj)) return obj.map(strip)
-    if (obj && typeof obj === 'object')
-      return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)]))
+    console.log('[cache-state strip] starts')
+    if (Array.isArray(obj)) {
+      const r = obj.map(strip)
+      console.log('[cache-state strip] ends — array')
+      return r
+    }
+    if (obj && typeof obj === 'object') {
+      const r = Object.fromEntries(
+        Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)])
+      )
+      console.log('[cache-state strip] ends — object')
+      return r
+    }
+    console.log('[cache-state strip] ends — primitive')
     return obj
   }
+  // ── strip (inline) END ─────────────────────────────────────────────────────
+
   const stripped = strip(state)
   liveStateCache[resourceId] = stripped
   cacheSet(resourceId, stripped).catch(() => {})
   res.json({ cached: true, resourceId })
+  console.log('[POST /api/cache-state] ends — cached resourceId:', resourceId)
 })
+// ── POST /api/cache-state END ────────────────────────────────────────────────
+
+
+// ── POST /internal/drift-event START ────────────────────────────────────────
+// Internal endpoint called by the Function App to push drift events to connected frontend clients
+app.post('/internal/drift-event', express.json(), (req, res) => {
+  console.log('[POST /internal/drift-event] starts')
+  const event = req.body
+  if (event?.subscriptionId) {
+    const room = event.resourceGroup
+      ? `${event.subscriptionId}:${event.resourceGroup}`
+      : event.subscriptionId
+    io.to(room).emit('driftEvent', event)
+    sendDriftAlert(event).catch(err => console.error('[Alert]', err.message))
+  }
+  res.sendStatus(200)
+  console.log('[POST /internal/drift-event] ends')
+})
+// ── POST /internal/drift-event END ──────────────────────────────────────────
 
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {

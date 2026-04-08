@@ -1,11 +1,13 @@
+// ============================================================
+// FILE: src/hooks/useAzureScope.js
+// ============================================================
 import { useState, useEffect, useCallback } from 'react'
 import {
   fetchSubscriptions as apiFetchSubs,
   fetchResourceGroups as apiFetchRGs,
   fetchResources as apiFetchResources,
 } from '../services/api'
-
-// ── Demo fallback — mirrors the existing dummy data shape ──────────────────
+ 
 const DEMO_SUBS = [
   { id: 'sub-1', name: 'Production - Enterprise (a1b2c3d4-...)' },
   { id: 'sub-2', name: 'Development - Team (e5f6g7h8-...)' },
@@ -21,18 +23,24 @@ const DEMO_RESOURCES = {
   'rg-2': [{ id: 'r-4', name: 'app-prod-api', type: 'App Service' }, { id: 'r-5', name: 'func-prod-worker', type: 'Function App' }],
   'rg-3': [{ id: 'r-6', name: 'vnet-prod-main', type: 'Virtual Network' }, { id: 'r-7', name: 'nsg-prod-frontend', type: 'Network Security Group' }],
 }
-
+ 
+ 
+// ── useAzureScope START ──────────────────────────────────────────────────────
+// React hook that loads Azure subscriptions, resource groups, and resources with demo fallback
 export function useAzureScope() {
+  console.log('[useAzureScope] starts')
   const [subscriptions, setSubscriptions] = useState([])
   const [resourceGroups, setResourceGroups] = useState([])
   const [resources, setResources] = useState([])
   const [loading, setLoading] = useState(false)
   const [scopeError, setScopeError] = useState(null)
   const [isDemoMode, setIsDemoMode] = useState(false)
-
-  // Load subscriptions on mount — falls back to demo data if API is unreachable
+ 
   useEffect(() => {
+    // ── load START ───────────────────────────────────────────────────────
+    // Fetches subscriptions on mount; falls back to demo data if backend is unreachable
     const load = async () => {
+      console.log('[useAzureScope.load] starts')
       setLoading(true)
       try {
         const data = await apiFetchSubs()
@@ -42,57 +50,82 @@ export function useAzureScope() {
             : []
         )
         setIsDemoMode(false)
+        console.log('[useAzureScope.load] ends — live mode')
       } catch {
-        // Backend not yet connected — run in demo mode silently
         setSubscriptions(DEMO_SUBS)
         setIsDemoMode(true)
+        console.log('[useAzureScope.load] ends — demo mode fallback')
       } finally {
         setLoading(false)
       }
     }
+    // ── load END ─────────────────────────────────────────────────────────
     load()
   }, [])
-
+ 
+  // ── fetchRGs START ───────────────────────────────────────────────────────
+  // Loads resource groups for a subscription; uses demo data in demo mode
   const fetchRGs = useCallback(async (subscriptionId) => {
-    if (!subscriptionId) { setResourceGroups([]); setResources([]); return }
+    console.log('[fetchRGs] starts — subscriptionId:', subscriptionId)
+    if (!subscriptionId) { setResourceGroups([]); setResources([])
+      console.log('[fetchRGs] ends — no subscriptionId')
+      return
+    }
     setLoading(true)
     setResourceGroups([])
     setResources([])
     setScopeError(null)
     try {
       if (isDemoMode) {
-        await new Promise(r => setTimeout(r, 10))
+        await new Promise(r => setTimeout(r, 150))
         setResourceGroups(DEMO_RGS[subscriptionId] ?? [])
+        console.log('[fetchRGs] ends — demo mode')
       } else {
         const data = await apiFetchRGs(subscriptionId)
         setResourceGroups(data.map(rg => ({ id: rg.name ?? rg.id, name: rg.name, location: rg.location })))
+        console.log('[fetchRGs] ends — live mode, count:', data.length)
       }
     } catch (err) {
       setScopeError(err.message)
+      console.log('[fetchRGs] ends — error:', err.message)
     } finally {
       setLoading(false)
     }
   }, [isDemoMode])
-
+  // ── fetchRGs END ─────────────────────────────────────────────────────────
+ 
+  // ── fetchResources START ─────────────────────────────────────────────────
+  // Loads resources for a resource group; uses demo data in demo mode
   const fetchResources = useCallback(async (subscriptionId, resourceGroupId) => {
-    if (!resourceGroupId) { setResources([]); return }
+    console.log('[fetchResources] starts — rg:', resourceGroupId)
+    if (!resourceGroupId) { setResources([])
+      console.log('[fetchResources] ends — no resourceGroupId')
+      return
+    }
     setLoading(true)
     setResources([])
     setScopeError(null)
     try {
       if (isDemoMode) {
-        await new Promise(r => setTimeout(r, 10))
+        await new Promise(r => setTimeout(r, 100))
         setResources(DEMO_RESOURCES[resourceGroupId] ?? [])
+        console.log('[fetchResources] ends — demo mode')
       } else {
         const data = await apiFetchResources(subscriptionId, resourceGroupId)
         setResources(data.map(r => ({ id: r.id, name: r.name, type: r.type?.split('/').pop() ?? r.type })))
+        console.log('[fetchResources] ends — live mode, count:', data.length)
       }
     } catch (err) {
       setScopeError(err.message)
+      console.log('[fetchResources] ends — error:', err.message)
     } finally {
       setLoading(false)
     }
   }, [isDemoMode])
-
+  // ── fetchResources END ───────────────────────────────────────────────────
+ 
+  console.log('[useAzureScope] ends — setup complete')
   return { subscriptions, resourceGroups, resources, loading, scopeError, isDemoMode, fetchRGs, fetchResources }
 }
+// ── useAzureScope END ────────────────────────────────────────────────────────
+ 
