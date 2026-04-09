@@ -165,12 +165,12 @@ function startQueuePoller() {
       const { receivedMessageItems } = await client.receiveMessages({ numberOfMessages: 32, visibilityTimeout: 30 })
       for (const msg of receivedMessageItems) {
         const event = parseMessage(msg)
-        if (!event) continue
-        await client.deleteMessage(msg.messageId, msg.popReceipt)
-        if (isDuplicate(event)) continue
+        if (!event) { await client.deleteMessage(msg.messageId, msg.popReceipt); continue }
+        if (isDuplicate(event)) { await client.deleteMessage(msg.messageId, msg.popReceipt); continue }
 
         enrichWithDiff(event)
-          .then(enriched => {
+          .then(async enriched => {
+            await client.deleteMessage(msg.messageId, msg.popReceipt)
             if (!global.io) return
             const rooms = [
               enriched.subscriptionId,

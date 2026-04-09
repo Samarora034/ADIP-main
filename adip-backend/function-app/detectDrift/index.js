@@ -14,12 +14,11 @@ const baselineCtr = blobService.getContainerClient('baselines')
 const driftCtr    = blobService.getContainerClient('drift-records')
 
 
-
-
-// ── Main handler START ───────────────────────────────────────────────────────
+// ── Main handler START ────────────────────────────────────────────────────────
 module.exports = async function (context, req) {
   const body = req.body
 
+  // Event Grid validation handshake
   if (Array.isArray(body) && body[0]?.eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent') {
     context.res = { status: 200, body: { validationResponse: body[0].data.validationCode } }
     return
@@ -67,13 +66,16 @@ module.exports = async function (context, req) {
       liveState:     live,
       baselineState: baseState,
       differences:   changes,
+      changes,           // alias — frontend uses both field names
       severity,
       changeCount:   changes.length,
+      hasPrevious:   !!baseState,
       detectedAt,
     }
 
     await writeBlob(driftCtr, driftKey(resourceId, detectedAt), record)
 
+    // Push to Express → Socket.IO if URL is configured
     const apiUrl = process.env.EXPRESS_API_URL
     if (apiUrl) {
       fetch(`${apiUrl}/internal/drift-event`, {
@@ -83,9 +85,10 @@ module.exports = async function (context, req) {
     }
 
     context.res = { status: 200, body: { drifted: true, ...record } }
+    context.log(`detectDrift: ${severity} — ${changes.length} change(s) on ${name}`)
   } catch (err) {
     context.log.error('detectDrift error:', err.message)
     context.res = { status: 500, body: { error: err.message } }
   }
 }
-// ── Main handler END ─────────────────────────────────────────────────────────
+// ── Main handler END ──────────────────────────────────────────────────────────

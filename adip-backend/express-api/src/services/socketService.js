@@ -13,7 +13,7 @@ function broadcastDriftEvent(event) {
   const room = event.resourceGroup
     ? `${event.subscriptionId}:${event.resourceGroup}`
     : event.subscriptionId
-  global.io.to(room).emit('driftEvent', event)
+  global.io.to(room).emit('resourceChange', event)
   console.log('[broadcastDriftEvent] ends — emitted to room:', room)
 }
 // ── broadcastDriftEvent END ──────────────────────────────────────────────────

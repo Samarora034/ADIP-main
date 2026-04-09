@@ -15,6 +15,7 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
   console.log('[useDriftSocket] starts — scope:', scope?.subscriptionId)
   const [changeEvents, setChangeEvents]       = useState([])
   const [socketConnected, setSocketConnected] = useState(false)
+  const [socketError, setSocketError]         = useState(false)
   const socketRef      = useRef(null)
   const mountedRef     = useRef(true)
   const isSubmittedRef = useRef(isSubmitted)
@@ -48,13 +49,14 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
       .then(({ io }) => {
         if (!mountedRef.current) return
         socketRef.current?.disconnect()
-        const socket = io(SOCKET_URL, { transports: ['websocket'], reconnectionAttempts: 5 })
+        const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'], reconnectionAttempts: Infinity, reconnectionDelay: 2000, reconnectionDelayMax: 10000 })
         socketRef.current = socket
  
         socket.on('connect', () => {
           console.log('[socket.connect] starts')
           if (!mountedRef.current) return
           setSocketConnected(true)
+          setSocketError(false)
           socket.emit('subscribe', {
             subscriptionId: scope.subscriptionId,
             resourceGroup:  scope.resourceGroup || null,
@@ -69,7 +71,11 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
  
         socket.on('connect_error', () => {
           console.log('[socket.connect_error] fires')
-          if (mountedRef.current) setSocketConnected(false)
+          if (mountedRef.current) { setSocketConnected(false); setSocketError(true) }
+        })
+
+        socket.on('reconnect', () => {
+          if (mountedRef.current) setSocketError(false)
         })
  
         // ── resourceChange handler START ───────────────────────────────────
@@ -127,6 +133,6 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
   // ── clearChangeEvents END ────────────────────────────────────────────────
  
   console.log('[useDriftSocket] ends — setup complete')
-  return { driftEvents: changeEvents, socketConnected, clearDriftEvents: clearChangeEvents }
+  return { driftEvents: changeEvents, socketConnected, socketError, clearDriftEvents: clearChangeEvents }
 }
 // ── useDriftSocket END ───────────────────────────────────────────────────────

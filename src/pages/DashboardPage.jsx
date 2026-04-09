@@ -63,16 +63,7 @@ const RESOURCE_CONFIGS = {
 }
 
 const LIVE_EVENTS_TEMPLATE = [
-  { type: 'scan',    message: 'Initiating configuration fetch...',             icon: 'scan' },
-  { type: 'connect', message: 'Connecting to Azure Resource Manager API...',  icon: 'connect' },
-  { type: 'fetch',   message: 'Fetching resource group configuration...',      icon: 'fetch' },
-  { type: 'fetch',   message: 'Enumerating resources in resource group...',   icon: 'fetch' },
-  { type: 'compare', message: 'Loading resource configurations...',            icon: 'compare' },
-  { type: 'fetch',   message: 'Fetching detailed properties for each resource...', icon: 'fetch' },
-  { type: 'compare', message: 'Processing network security rules...',          icon: 'compare' },
-  { type: 'fetch',   message: 'Fetching tags and metadata...',                 icon: 'fetch' },
-  { type: 'compare', message: 'Building configuration JSON...',                icon: 'compare' },
-  { type: 'complete', message: 'Configuration loaded successfully. Displaying results.', icon: 'done' },
+  { type: 'scan',    message: 'Initiating configuration fetch...',             icon: 'scan' }
 ]
 
 export default function DashboardPage() {
@@ -83,6 +74,8 @@ export default function DashboardPage() {
     subscription,  setSubscription,
     resourceGroup, setResourceGroup,
     resource,      setResource,
+    resourceGroups, setResourceGroups,
+    resources,      setResources,
     isScanning,    setIsScanning,
     isMonitoring,  setIsMonitoring,
     isSubmitted,   setIsSubmitted,
@@ -96,10 +89,10 @@ export default function DashboardPage() {
 
   // ── Azure scope data from hook (real API with demo fallback) ───────────
   const {
-    subscriptions, resourceGroups, resources,
+    subscriptions,
     loading: scopeLoading, isDemoMode,
     fetchRGs, fetchResources,
-  } = useAzureScope()
+  } = useAzureScope({ resourceGroups, setResourceGroups, resources, setResources, savedSubscription: subscription, savedResourceGroup: resourceGroup })
 
   // ── Real-time drift feed via Socket.IO ────────────────────────────────
   const scope = useMemo(
@@ -111,10 +104,13 @@ export default function DashboardPage() {
   // Task 4: re-fetch live config from ARM when a resource change event arrives
   const handleConfigUpdate = useCallback((event) => {
     if (!event.resourceId && !event.resourceGroup) return
-    // Re-fetch the full live configuration for the currently displayed scope
-    fetchResourceConfiguration(subscription, resourceGroup, resource || null)
-      .then(cfg => { if (cfg) setConfigData(cfg) })
-      .catch(() => {})
+    if (event.liveState) {
+      setConfigData(event.liveState)
+    } else {
+      fetchResourceConfiguration(subscription, resourceGroup, resource || null)
+        .then(cfg => { if (cfg) setConfigData(cfg) })
+        .catch(() => {})
+    }
   }, [subscription, resourceGroup, resource, setConfigData])
 
   const { driftEvents, socketConnected, clearDriftEvents } = useDriftSocket(scope, isSubmitted, handleConfigUpdate)
