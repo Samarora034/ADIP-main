@@ -1,116 +1,74 @@
 const { BlobServiceClient } = require('@azure/storage-blob')
+const { TableClient, odata } = require('@azure/data-tables')
 
-// Lazy-initialize so module can be required before dotenv loads
 let _blobService = null
-
-// ── getBlobService START ─────────────────────────────────────────────────────
-// Lazily initialises and returns the BlobServiceClient singleton
 function getBlobService() {
-  console.log('[getBlobService] starts')
   if (!_blobService) _blobService = BlobServiceClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING)
-  console.log('[getBlobService] ends')
   return _blobService
 }
-// ── getBlobService END ───────────────────────────────────────────────────────
 
-
-// Container handles — lazy, reused across calls
 const containers = {}
-
-// ── container START ──────────────────────────────────────────────────────────
-// Returns (or lazily creates) a cached ContainerClient for the given container name
 function container(name) {
-  console.log('[container] starts — name:', name)
   if (!containers[name]) containers[name] = getBlobService().getContainerClient(name)
-  console.log('[container] ends')
   return containers[name]
 }
-// ── container END ────────────────────────────────────────────────────────────
 
+// ── Table index clients ───────────────────────────────────────────────────────
+const _tables = {}
+function tableClient(name) {
+  if (!_tables[name])
+    try { _tables[name] = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, name) } catch {}
+  return _tables[name]
+}
 
-// ── blobKey START ────────────────────────────────────────────────────────────
-// Converts a resourceId into a deterministic, URL-safe blob name using base64url encoding
+// Safe row key — base64url of arbitrary string, truncated to 512 chars (Table Storage limit)
+function rowKey(str) { return Buffer.from(str).toString('base64url').slice(0, 512) }
+
+// ── blobKey START ─────────────────────────────────────────────────────────────
 function blobKey(resourceId) {
-  console.log('[blobKey] starts')
-  const key = Buffer.from(resourceId).toString('base64url') + '.json'
-  console.log('[blobKey] ends')
-  return key
+  return Buffer.from(resourceId).toString('base64url') + '.json'
 }
-// ── blobKey END ──────────────────────────────────────────────────────────────
+// ── blobKey END ───────────────────────────────────────────────────────────────
 
-
-// ── driftKey START ───────────────────────────────────────────────────────────
-// Creates a timestamp-prefixed blob name for drift records so they list chronologically
+// ── driftKey START ────────────────────────────────────────────────────────────
 function driftKey(resourceId, ts) {
-  console.log('[driftKey] starts')
   const stamp = (ts || new Date().toISOString()).replace(/[:.]/g, '-')
-  const key = `${stamp}_${Buffer.from(resourceId).toString('base64url')}.json`
-  console.log('[driftKey] ends')
-  return key
+  return `${stamp}_${Buffer.from(resourceId).toString('base64url')}.json`
 }
-// ── driftKey END ─────────────────────────────────────────────────────────────
+// ── driftKey END ──────────────────────────────────────────────────────────────
 
-
-// ── readBlob START ───────────────────────────────────────────────────────────
-// Downloads and JSON-parses a blob; returns null if the blob does not exist
+// ── readBlob START ────────────────────────────────────────────────────────────
 async function readBlob(containerName, blobName) {
-  console.log('[readBlob] starts — container:', containerName, 'blob:', blobName)
   try {
-    const blob  = container(containerName).getBlobClient(blobName)
-    const buf   = await blob.downloadToBuffer()
-    const result = JSON.parse(buf.toString('utf-8'))
-    console.log('[readBlob] ends')
-    return result
+    const buf = await container(containerName).getBlobClient(blobName).downloadToBuffer()
+    return JSON.parse(buf.toString('utf-8'))
   } catch (e) {
-    if (e.statusCode === 404 || e.code === 'BlobNotFound') {
-      console.log('[readBlob] ends — blob not found')
-      return null
-    }
-    console.log('[readBlob] ends — unexpected error:', e.message)
+    if (e.statusCode === 404 || e.code === 'BlobNotFound') return null
     throw e
   }
 }
-// ── readBlob END ─────────────────────────────────────────────────────────────
+// ── readBlob END ──────────────────────────────────────────────────────────────
 
-
-// ── writeBlob START ──────────────────────────────────────────────────────────
-// Serialises data to JSON and uploads it as a block blob with application/json content type
+// ── writeBlob START ───────────────────────────────────────────────────────────
 async function writeBlob(containerName, blobName, data) {
-  console.log('[writeBlob] starts — container:', containerName, 'blob:', blobName)
   const body = JSON.stringify(data)
   await container(containerName)
     .getBlockBlobClient(blobName)
     .upload(body, Buffer.byteLength(body), { blobHTTPHeaders: { blobContentType: 'application/json' } })
-  console.log('[writeBlob] ends')
 }
-// ── writeBlob END ────────────────────────────────────────────────────────────
+// ── writeBlob END ─────────────────────────────────────────────────────────────
 
 
 // ── Baselines ─────────────────────────────────────────────────────────────────
 
-// ── getBaseline START ────────────────────────────────────────────────────────
-// Reads the golden baseline for a resource from the baselines container
 async function getBaseline(subscriptionId, resourceId) {
-  console.log('[getBaseline] starts — subscriptionId:', subscriptionId, 'resourceId:', resourceId)
-  if (!resourceId) {
-    console.log('[getBaseline] ends — no resourceId provided')
-    return null
-  }
+  if (!resourceId) return null
   const doc = await readBlob('baselines', blobKey(resourceId))
-  if (doc && doc.subscriptionId !== subscriptionId) {
-    console.log('[getBaseline] ends — subscriptionId mismatch')
-    return null
-  }
-  console.log('[getBaseline] ends')
+  if (doc && doc.subscriptionId !== subscriptionId) return null
   return doc
 }
-// ── getBaseline END ──────────────────────────────────────────────────────────
 
-
-// ── saveBaseline START ───────────────────────────────────────────────────────
-// Writes a new golden baseline document to the baselines container
 async function saveBaseline(subscriptionId, resourceGroupId, resourceId, resourceState) {
-  console.log('[saveBaseline] starts — resourceId:', resourceId)
   const doc = {
     id: blobKey(resourceId),
     subscriptionId, resourceGroupId, resourceId,
@@ -118,130 +76,174 @@ async function saveBaseline(subscriptionId, resourceGroupId, resourceId, resourc
     promotedAt: new Date().toISOString(),
   }
   await writeBlob('baselines', blobKey(resourceId), doc)
-  console.log('[saveBaseline] ends')
   return doc
 }
-// ── saveBaseline END ─────────────────────────────────────────────────────────
 
-
-// ── upsertBaseline START ─────────────────────────────────────────────────────
-// Overwrites (or creates) the golden baseline — blob overwrite acts as upsert
 async function upsertBaseline(subscriptionId, resourceGroupId, resourceId, resourceState) {
-  console.log('[upsertBaseline] starts — resourceId:', resourceId)
-  const result = await saveBaseline(subscriptionId, resourceGroupId, resourceId, resourceState)
-  console.log('[upsertBaseline] ends')
-  return result
+  return saveBaseline(subscriptionId, resourceGroupId, resourceId, resourceState)
 }
-// ── upsertBaseline END ───────────────────────────────────────────────────────
 
 
 // ── Drift Records ─────────────────────────────────────────────────────────────
 
-// ── saveDriftRecord START ────────────────────────────────────────────────────
-// Persists a drift detection record to the drift-records container
+// ── saveDriftRecord START ─────────────────────────────────────────────────────
+// Writes blob + upserts a lightweight index entity into Table Storage
 async function saveDriftRecord(record) {
-  console.log('[saveDriftRecord] starts — resourceId:', record.resourceId)
   const key = driftKey(record.resourceId || 'unknown', record.detectedAt)
   await writeBlob('drift-records', key, { ...record, _blobKey: key })
-  console.log('[saveDriftRecord] ends')
+
+  // Write index entity — partitionKey = subscriptionId for efficient filtering
+  tableClient('driftIndex')?.upsertEntity({
+    partitionKey: record.subscriptionId || 'unknown',
+    rowKey:       rowKey(key),
+    blobKey:      key,
+    resourceId:   record.resourceId   || '',
+    resourceGroup:record.resourceGroup|| '',
+    severity:     record.severity     || '',
+    detectedAt:   record.detectedAt   || new Date().toISOString(),
+    changeCount:  record.changeCount  || 0,
+  }, 'Replace').catch(() => {})
 }
-// ── saveDriftRecord END ──────────────────────────────────────────────────────
+// ── saveDriftRecord END ───────────────────────────────────────────────────────
 
 
-// ── getDriftRecords START ────────────────────────────────────────────────────
-// Lists and filters drift records from Blob Storage sorted newest-first
+// ── getDriftRecords START ─────────────────────────────────────────────────────
+// Queries Table index first, then fetches only matching blobs — O(matches) not O(all)
 async function getDriftRecords({ subscriptionId, resourceGroup, severity, limit = 50 }) {
-  console.log('[getDriftRecords] starts — subscriptionId:', subscriptionId)
+  const tc = tableClient('driftIndex')
+  if (!tc) return _scanDriftRecords({ subscriptionId, resourceGroup, severity, limit })
+
+  let filter = `PartitionKey eq '${subscriptionId}'`
+  if (resourceGroup) filter += ` and resourceGroup eq '${resourceGroup}'`
+  if (severity)      filter += ` and severity eq '${severity}'`
+
+  const results = []
+  for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
+    if (results.length >= Number(limit)) break
+    const doc = await readBlob('drift-records', entity.blobKey)
+    if (doc) results.push(doc)
+  }
+  return results.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt))
+}
+// ── getDriftRecords END ───────────────────────────────────────────────────────
+
+
+// ── getDriftHistory START ─────────────────────────────────────────────────────
+// Queries Table index with optional date/resource filters, fetches only matching blobs
+async function getDriftHistory({ subscriptionId, startDate, endDate, resourceId, resourceGroup, limit = 100 }) {
+  const tc = tableClient('driftIndex')
+  if (!tc) return _scanDriftHistory({ subscriptionId, startDate, endDate, resourceId, resourceGroup, limit })
+
+  let filter = `PartitionKey eq '${subscriptionId}'`
+  if (resourceGroup) filter += ` and resourceGroup eq '${resourceGroup}'`
+  if (resourceId)    filter += ` and resourceId eq '${resourceId}'`
+  if (startDate)     filter += ` and detectedAt ge '${new Date(startDate).toISOString()}'`
+  if (endDate)       filter += ` and detectedAt le '${new Date(endDate).toISOString()}'`
+
+  const results = []
+  for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
+    if (results.length >= Number(limit)) break
+    const doc = await readBlob('drift-records', entity.blobKey)
+    if (doc) results.push(doc)
+  }
+  return results.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt))
+}
+// ── getDriftHistory END ───────────────────────────────────────────────────────
+
+
+// ── Configuration Genome ──────────────────────────────────────────────────────
+
+// ── saveGenomeSnapshot START ──────────────────────────────────────────────────
+// Writes blob + upserts index entity into genomeIndex table
+async function saveGenomeSnapshot(subscriptionId, resourceId, resourceState, label = '') {
+  const ts  = new Date().toISOString()
+  const key = `${ts.replace(/[:.]/g, '-')}_${Buffer.from(resourceId).toString('base64url')}.json`
+  const doc = { subscriptionId, resourceId, resourceState, label, savedAt: ts }
+  await writeBlob('baseline-genome', key, doc)
+
+  tableClient('genomeIndex')?.upsertEntity({
+    partitionKey: subscriptionId || 'unknown',
+    rowKey:       rowKey(key),
+    blobKey:      key,
+    resourceId:   resourceId || '',
+    savedAt:      ts,
+    label:        label || '',
+  }, 'Replace').catch(() => {})
+
+  return { ...doc, _blobKey: key }
+}
+// ── saveGenomeSnapshot END ────────────────────────────────────────────────────
+
+
+// ── listGenomeSnapshots START ─────────────────────────────────────────────────
+// Queries genomeIndex table, fetches only matching blobs
+async function listGenomeSnapshots(subscriptionId, resourceId, limit = 50) {
+  const tc = tableClient('genomeIndex')
+  if (!tc) return _scanGenomeSnapshots(subscriptionId, resourceId, limit)
+
+  let filter = `PartitionKey eq '${subscriptionId}'`
+  if (resourceId) filter += ` and resourceId eq '${resourceId}'`
+
+  const results = []
+  for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
+    if (results.length >= limit) break
+    const doc = await readBlob('baseline-genome', entity.blobKey)
+    if (doc) results.push({ ...doc, _blobKey: entity.blobKey })
+  }
+  return results.sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
+}
+// ── listGenomeSnapshots END ───────────────────────────────────────────────────
+
+
+async function getGenomeSnapshot(key) {
+  return readBlob('baseline-genome', key)
+}
+
+
+// ── Fallback blob-scan functions (used if Table Storage unavailable) ───────────
+async function _scanDriftRecords({ subscriptionId, resourceGroup, severity, limit }) {
   const results = []
   for await (const blob of container('drift-records').listBlobsFlat()) {
     if (results.length >= Number(limit)) break
     const doc = await readBlob('drift-records', blob.name)
-    if (!doc) continue
-    if (doc.subscriptionId !== subscriptionId) continue
+    if (!doc || doc.subscriptionId !== subscriptionId) continue
     if (resourceGroup && doc.resourceGroup !== resourceGroup) continue
     if (severity && doc.severity !== severity) continue
     results.push(doc)
   }
-  const sorted = results.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt))
-  console.log('[getDriftRecords] ends — returned:', sorted.length, 'records')
-  return sorted
+  return results.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt))
 }
-// ── getDriftRecords END ──────────────────────────────────────────────────────
 
-
-// ── getDriftHistory START ────────────────────────────────────────────────────
-// Filtered drift history listing with optional date range, resource, and resource group filters
-async function getDriftHistory({ subscriptionId, startDate, endDate, resourceId, resourceGroup, limit = 100 }) {
-  console.log('[getDriftHistory] starts — subscriptionId:', subscriptionId)
+async function _scanDriftHistory({ subscriptionId, startDate, endDate, resourceId, resourceGroup, limit }) {
   const results = []
   const startTs = startDate ? new Date(startDate).toISOString().replace(/[:.]/g, '-') : null
   const endTs   = endDate   ? new Date(endDate).toISOString().replace(/[:.]/g, '-')   : null
-
   for await (const blob of container('drift-records').listBlobsFlat()) {
     if (results.length >= Number(limit)) break
     const blobTs = blob.name.slice(0, 24)
     if (startTs && blobTs < startTs) continue
     if (endTs   && blobTs > endTs)   continue
-
     const doc = await readBlob('drift-records', blob.name)
-    if (!doc) continue
-    if (doc.subscriptionId !== subscriptionId) continue
+    if (!doc || doc.subscriptionId !== subscriptionId) continue
     if (resourceGroup && doc.resourceGroup !== resourceGroup) continue
     if (resourceId    && doc.resourceId    !== resourceId)    continue
     results.push(doc)
   }
-  const sorted = results.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt))
-  console.log('[getDriftHistory] ends — returned:', sorted.length, 'records')
-  return sorted
+  return results.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt))
 }
-// ── getDriftHistory END ──────────────────────────────────────────────────────
 
-
-// ── Configuration Genome ──────────────────────────────────────────────────────
-
-// ── saveGenomeSnapshot START ─────────────────────────────────────────────────
-// Saves a versioned configuration snapshot to the baseline-genome container
-async function saveGenomeSnapshot(subscriptionId, resourceId, resourceState, label = '') {
-  console.log('[saveGenomeSnapshot] starts — resourceId:', resourceId, 'label:', label)
-  const ts  = new Date().toISOString()
-  const key = `${ts.replace(/[:.]/g, '-')}_${Buffer.from(resourceId).toString('base64url')}.json`
-  const doc = { subscriptionId, resourceId, resourceState, label, savedAt: ts }
-  await writeBlob('baseline-genome', key, doc)
-  console.log('[saveGenomeSnapshot] ends — key:', key)
-  return { ...doc, _blobKey: key }
-}
-// ── saveGenomeSnapshot END ───────────────────────────────────────────────────
-
-
-// ── listGenomeSnapshots START ────────────────────────────────────────────────
-// Lists all genome snapshots for a resource, sorted newest-first
-async function listGenomeSnapshots(subscriptionId, resourceId, limit = 50) {
-  console.log('[listGenomeSnapshots] starts — subscriptionId:', subscriptionId, 'resourceId:', resourceId)
+async function _scanGenomeSnapshots(subscriptionId, resourceId, limit) {
   const results = []
   for await (const blob of container('baseline-genome').listBlobsFlat()) {
     if (results.length >= limit) break
     const doc = await readBlob('baseline-genome', blob.name)
-    if (!doc) continue
-    if (doc.subscriptionId !== subscriptionId) continue
+    if (!doc || doc.subscriptionId !== subscriptionId) continue
     if (resourceId && doc.resourceId !== resourceId) continue
     results.push({ ...doc, _blobKey: blob.name })
   }
-  const sorted = results.sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
-  console.log('[listGenomeSnapshots] ends — returned:', sorted.length, 'snapshots')
-  return sorted
+  return results.sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
 }
-// ── listGenomeSnapshots END ──────────────────────────────────────────────────
 
-
-// ── getGenomeSnapshot START ──────────────────────────────────────────────────
-// Retrieves a single genome snapshot by its blob key (O(1) point read)
-async function getGenomeSnapshot(blobKey) {
-  console.log('[getGenomeSnapshot] starts — blobKey:', blobKey)
-  const result = await readBlob('baseline-genome', blobKey)
-  console.log('[getGenomeSnapshot] ends')
-  return result
-}
-// ── getGenomeSnapshot END ────────────────────────────────────────────────────
 
 module.exports = {
   getBaseline,
