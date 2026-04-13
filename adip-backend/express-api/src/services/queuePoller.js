@@ -135,15 +135,6 @@ async function enrichWithDiff(event) {
 
   await cacheSet(event.resourceId, current)
 
-  if (changes.length > 0) {
-    try {
-      const { saveGenomeSnapshot } = require('./blobService')
-      const actor = resolvedCaller || event.caller || 'system'
-      saveGenomeSnapshot(event.subscriptionId, event.resourceId, current,
-        `auto: ${changes.length} change(s) by ${actor}`).catch(() => {})
-    } catch {}
-  }
-
   return {
     ...event,
     caller:      resolvedCaller || event.caller,
@@ -173,8 +164,8 @@ function startQueuePoller() {
             await client.deleteMessage(msg.messageId, msg.popReceipt)
             if (!global.io) return
             const rooms = [
-              enriched.subscriptionId,
-              enriched.resourceGroup ? `${enriched.subscriptionId}:${enriched.resourceGroup}` : null,
+              enriched.subscriptionId?.toLowerCase(),
+              enriched.resourceGroup ? `${enriched.subscriptionId}:${enriched.resourceGroup}`.toLowerCase() : null,
             ].filter(Boolean)
             rooms.forEach(room => global.io.to(room).emit('resourceChange', enriched))
           })

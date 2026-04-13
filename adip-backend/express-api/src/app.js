@@ -19,7 +19,7 @@ io.on('connection', (socket) => {
   console.log('[io.connection] starts — socketId:', socket.id)
   socket.on('subscribe', ({ subscriptionId, resourceGroup }) => {
     console.log('[io.subscribe] starts — subscriptionId:', subscriptionId, 'resourceGroup:', resourceGroup)
-    const room = resourceGroup ? `${subscriptionId}:${resourceGroup}` : subscriptionId
+    const room = resourceGroup ? `${subscriptionId}:${resourceGroup}`.toLowerCase() : subscriptionId.toLowerCase()
     socket.join(room)
     console.log('[io.subscribe] ends — joined room:', room)
   })
@@ -100,8 +100,8 @@ app.post('/internal/drift-event', express.json(), (req, res) => {
   const event = req.body
   if (event?.subscriptionId) {
     const room = event.resourceGroup
-      ? `${event.subscriptionId}:${event.resourceGroup}`
-      : event.subscriptionId
+      ? `${event.subscriptionId}:${event.resourceGroup}`.toLowerCase()
+      : event.subscriptionId.toLowerCase()
     io.to(room).emit('resourceChange', event)  // unified event name
     const logicAppUrl = process.env.ALERT_LOGIC_APP_URL
     if (logicAppUrl && ['critical', 'high'].includes(event.severity)) fetch(logicAppUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) }).catch(() => {})

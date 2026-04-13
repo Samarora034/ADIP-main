@@ -20,7 +20,8 @@ export function DashboardProvider({ children }) {
   const [isMonitoring,   setIsMonitoring]   = useState(false)
   const [isSubmitted,    setIsSubmitted]    = useState(false)
   const [configData,     setConfigData]     = useState(null)
-  const [liveEvents,     setLiveEvents]     = useState([])
+  const [liveEvents,     setLiveEvents]     = usePersisted('adip.liveEvents', [])
+  const [driftEvents,    setDriftEvents]    = usePersisted('adip.driftEvents', [])
   const [scanProgress,   setScanProgress]   = useState(0)
   const [policyData,     setPolicyData]     = useState(null)
   const [anomalies,      setAnomalies]      = useState([])
@@ -40,6 +41,7 @@ export function DashboardProvider({ children }) {
       isSubmitted,    setIsSubmitted,
       configData,     setConfigData,
       liveEvents,     setLiveEvents,
+      driftEvents,    setDriftEvents,
       scanProgress,   setScanProgress,
       policyData,     setPolicyData,
       anomalies,      setAnomalies,

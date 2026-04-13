@@ -11,9 +11,11 @@ const SOCKET_URL =
  
 // ── useDriftSocket START ─────────────────────────────────────────────────────
 // React hook that manages the Socket.IO connection and real-time drift event feed
-export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null) {
+export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null, externalEvents = null, setExternalEvents = null) {
   console.log('[useDriftSocket] starts — scope:', scope?.subscriptionId)
-  const [changeEvents, setChangeEvents]       = useState([])
+  const [_localEvents, _setLocalEvents]       = useState([])
+  const changeEvents    = externalEvents    ?? _localEvents
+  const setChangeEvents = setExternalEvents ?? _setLocalEvents
   const [socketConnected, setSocketConnected] = useState(false)
   const [socketError, setSocketError]         = useState(false)
   const socketRef      = useRef(null)
@@ -34,7 +36,7 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
       }].slice(-200)
     )
     console.log('[addEvent] ends')
-  }, [])
+  }, [setChangeEvents])
   // ── addEvent END ─────────────────────────────────────────────────────────
  
   // ── connectSocket START ──────────────────────────────────────────────────
@@ -139,7 +141,7 @@ export function useDriftSocket(scope, isSubmitted = false, onConfigUpdate = null
     console.log('[clearChangeEvents] starts')
     setChangeEvents([])
     console.log('[clearChangeEvents] ends')
-  }, [])
+  }, [setChangeEvents])
   // ── clearChangeEvents END ────────────────────────────────────────────────
  
   console.log('[useDriftSocket] ends — setup complete')

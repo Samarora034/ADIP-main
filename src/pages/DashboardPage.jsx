@@ -81,6 +81,7 @@ export default function DashboardPage() {
     isSubmitted,   setIsSubmitted,
     configData,    setConfigData,
     liveEvents,    setLiveEvents,
+    driftEvents,    setDriftEvents,
     scanProgress,  setScanProgress,
     policyData,    setPolicyData,
     anomalies,     setAnomalies,
@@ -113,7 +114,7 @@ export default function DashboardPage() {
     }
   }, [subscription, resourceGroup, resource, setConfigData])
 
-  const { driftEvents, socketConnected, clearDriftEvents } = useDriftSocket(scope, isSubmitted, handleConfigUpdate)
+  const { socketConnected, clearDriftEvents } = useDriftSocket(scope, isSubmitted, handleConfigUpdate, driftEvents, setDriftEvents)
 
   useEffect(() => () => { if (scanInterval.current) clearInterval(scanInterval.current) }, [])
 
