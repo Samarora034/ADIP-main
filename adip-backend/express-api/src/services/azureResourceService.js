@@ -5,7 +5,6 @@ const { DefaultAzureCredential } = require('@azure/identity')
 const credential = new DefaultAzureCredential()
 
 // Static API version map — covers the most common resource types
-// Falls back to provider-level API version discovery if type not listed
 const API_VERSION_MAP = {
   'storageaccounts':          '2023-01-01',
   'virtualmachines':          '2023-07-01',
@@ -20,7 +19,7 @@ const API_VERSION_MAP = {
   'servers':                  '2023-05-01',
   'databases':                '2023-05-01',
   'components':               '2020-02-02',
-  'databaseaccounts':         '2024-11-15',   // Cosmos DB
+  'databaseaccounts':         '2024-11-15',
   'namespaces':               '2022-10-01',
   'topics':                   '2022-06-15',
   'registries':               '2023-07-01',
@@ -44,15 +43,25 @@ const API_VERSION_MAP = {
   'containergroups':          '2023-05-01',
 }
 
-// Cache for provider API versions fetched from ARM
+// Cache for provider API versions fetched dynamically from ARM
 const providerApiVersionCache = {}
 
+
+// ── getApiVersion START ──────────────────────────────────────────────────────
+// Resolves the ARM API version for a resource type — checks static map first, then queries ARM
 async function getApiVersion(subscriptionId, provider, type) {
+  console.log('[getApiVersion] starts — provider:', provider, 'type:', type)
   const key = type.toLowerCase()
-  if (API_VERSION_MAP[key]) return API_VERSION_MAP[key]
+  if (API_VERSION_MAP[key]) {
+    console.log('[getApiVersion] ends — found in static map:', API_VERSION_MAP[key])
+    return API_VERSION_MAP[key]
+  }
 
   const cacheKey = `${provider}/${type}`
-  if (providerApiVersionCache[cacheKey]) return providerApiVersionCache[cacheKey]
+  if (providerApiVersionCache[cacheKey]) {
+    console.log('[getApiVersion] ends — found in cache:', providerApiVersionCache[cacheKey])
+    return providerApiVersionCache[cacheKey]
+  }
 
   try {
     const client = resourceClient(subscriptionId)
@@ -64,38 +73,66 @@ async function getApiVersion(subscriptionId, provider, type) {
     const stable = apiVersions.filter(v => !v.includes('preview'))
     const version = stable[0] || apiVersions[0] || '2021-04-01'
     providerApiVersionCache[cacheKey] = version
-    // Also cache by type key for future lookups
     API_VERSION_MAP[key] = version
+    console.log('[getApiVersion] ends — resolved from ARM:', version)
     return version
   } catch {
+    console.log('[getApiVersion] ends — fallback to default 2021-04-01')
     return '2021-04-01'
   }
 }
+// ── getApiVersion END ────────────────────────────────────────────────────────
 
+
+// ── resourceClient START ─────────────────────────────────────────────────────
+// Returns a new ResourceManagementClient for the given subscription
 function resourceClient(subscriptionId) {
-  return new ResourceManagementClient(credential, subscriptionId)
+  console.log('[resourceClient] starts — subscriptionId:', subscriptionId)
+  const client = new ResourceManagementClient(credential, subscriptionId)
+  console.log('[resourceClient] ends')
+  return client
 }
+// ── resourceClient END ───────────────────────────────────────────────────────
 
+
+// ── listSubscriptions START ──────────────────────────────────────────────────
+// Lists all Azure subscriptions accessible to the current credential
 async function listSubscriptions() {
+  console.log('[listSubscriptions] starts')
   const client = new SubscriptionClient(credential)
   const subs = []
   for await (const s of client.subscriptions.list()) subs.push(s)
+  console.log('[listSubscriptions] ends — found:', subs.length, 'subscriptions')
   return subs
 }
+// ── listSubscriptions END ────────────────────────────────────────────────────
 
+
+// ── listResourceGroups START ─────────────────────────────────────────────────
+// Lists all resource groups in the given subscription
 async function listResourceGroups(subscriptionId) {
+  console.log('[listResourceGroups] starts — subscriptionId:', subscriptionId)
   const client = resourceClient(subscriptionId)
   const rgs = []
   for await (const rg of client.resourceGroups.list()) rgs.push(rg)
+  console.log('[listResourceGroups] ends — found:', rgs.length, 'resource groups')
   return rgs
 }
+// ── listResourceGroups END ───────────────────────────────────────────────────
 
+
+// ── listResources START ──────────────────────────────────────────────────────
+// Lists all resources in the given resource group
 async function listResources(subscriptionId, resourceGroupName) {
+  console.log('[listResources] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupName)
   const client = resourceClient(subscriptionId)
   const resources = []
   for await (const r of client.resources.listByResourceGroup(resourceGroupName)) resources.push(r)
+  console.log('[listResources] ends — found:', resources.length, 'resources')
   return resources
 }
+// ── listResources END ────────────────────────────────────────────────────────
+
 
 // Child resource paths to fetch and merge for each parent resource type
 const CHILD_RESOURCES = {
@@ -110,9 +147,15 @@ const CHILD_RESOURCES = {
   ],
 }
 
+
+// ── fetchWithFallback START ──────────────────────────────────────────────────
+// Attempts an ARM GET and automatically retries with a corrected API version on 400 mismatch errors
 async function fetchWithFallback(client, rg, provider, type, name, apiVersion) {
+  console.log('[fetchWithFallback] starts — type:', type, 'name:', name, 'apiVersion:', apiVersion)
   try {
-    return await client.resources.get(rg, provider, '', type, name, apiVersion)
+    const result = await client.resources.get(rg, provider, '', type, name, apiVersion)
+    console.log('[fetchWithFallback] ends')
+    return result
   } catch (err) {
     const match = err.message?.match(/The supported api-versions are '([^']+)'/)
     if (match) {
@@ -120,13 +163,22 @@ async function fetchWithFallback(client, rg, provider, type, name, apiVersion) {
       const stable   = versions.filter(v => !v.includes('preview'))
       const fallback = stable[stable.length - 1] || versions[versions.length - 1]
       API_VERSION_MAP[type.toLowerCase()] = fallback
-      return await client.resources.get(rg, provider, '', type, name, fallback)
+      const result = await client.resources.get(rg, provider, '', type, name, fallback)
+      console.log('[fetchWithFallback] ends — used fallback version:', fallback)
+      return result
     }
+    console.log('[fetchWithFallback] ends — rethrown error')
     throw err
   }
 }
+// ── fetchWithFallback END ────────────────────────────────────────────────────
 
+
+// ── getResourceConfig START ──────────────────────────────────────────────────
+// Fetches the live ARM configuration for a specific resource or all resources in a resource group
+// Also fetches child resources (e.g. blobServices) and merges them into _childConfig
 async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) {
+  console.log('[getResourceConfig] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupName, 'resourceId:', resourceId)
   const client = resourceClient(subscriptionId)
   if (resourceId) {
     const parts      = resourceId.split('/')
@@ -137,9 +189,9 @@ async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) 
 
     const resource = await fetchWithFallback(client, resourceGroupName, provider, type, name, apiVersion)
 
-    // Fetch child resources and merge (e.g. blobServices/default for storage accounts)
     const children = CHILD_RESOURCES[type.toLowerCase()] || []
     if (children.length) {
+      console.log('[getResourceConfig] fetching', children.length, 'child resource(s) for type:', type)
       const results = await Promise.allSettled(
         children.map(c =>
           client.resources.get(resourceGroupName, provider, `${type}/${name}`, c.child, c.name, c.apiVersion)
@@ -152,6 +204,7 @@ async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) 
       })
     }
 
+    console.log('[getResourceConfig] ends — single resource')
     return resource
   }
   const resources = []
@@ -159,6 +212,9 @@ async function getResourceConfig(subscriptionId, resourceGroupName, resourceId) 
     resources.push(r)
   }
   const rg = await client.resourceGroups.get(resourceGroupName)
+  console.log('[getResourceConfig] ends — resource group with', resources.length, 'resources')
   return { resourceGroup: rg, resources }
 }
+// ── getResourceConfig END ────────────────────────────────────────────────────
+
 module.exports = { listSubscriptions, listResourceGroups, listResources, getResourceConfig, getApiVersion }

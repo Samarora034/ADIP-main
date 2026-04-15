@@ -4,7 +4,7 @@ const cors = require('cors')
 const http = require('http')
 const { Server } = require('socket.io')
 const { startQueuePoller } = require('./services/queuePoller')
-const { sendDriftAlert }   = require('./services/alertService')
+const fetch = require('node-fetch')
 
 const app = express()
 const server = http.createServer(app)
@@ -13,12 +13,23 @@ const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: '*' } })
 global.io = io
 
+// ── io.on connection START ───────────────────────────────────────────────────
+// Handles new Socket.IO client connections and joins them to the appropriate subscription/RG room
 io.on('connection', (socket) => {
-  socket.on('subscribe', ({ subscriptionId, resourceGroup }) => {
-    const room = resourceGroup ? `${subscriptionId}:${resourceGroup}` : subscriptionId
-    socket.join(room)
+  console.log('[io.connection] starts — socketId:', socket.id)
+  socket.on('subscribe', ({ subscriptionId, resourceGroup, resourceId }) => {
+    console.log('[io.subscribe] starts — subscriptionId:', subscriptionId, 'resourceGroup:', resourceGroup)
+    const baseRoom = resourceGroup ? `${subscriptionId}:${resourceGroup}`.toLowerCase() : subscriptionId.toLowerCase()
+    socket.join(baseRoom)
+    if (resourceId) {
+      const resName = String(resourceId).split('/').pop()?.toLowerCase()
+      if (resName) socket.join(`${baseRoom}:${resName}`)
+    }
+    console.log('[io.subscribe] ends — joined room:', baseRoom)
   })
+  console.log('[io.connection] ends')
 })
+// ── io.on connection END ─────────────────────────────────────────────────────
 
 app.use(cors())
 app.use(express.json())
@@ -27,7 +38,6 @@ app.use('/api', require('./routes/subscriptions'))
 app.use('/api', require('./routes/resourceGroups'))
 app.use('/api', require('./routes/resources'))
 app.use('/api', require('./routes/configuration'))
-app.use('/api', require('./routes/scan'))
 app.use('/api', require('./routes/drift'))
 app.use('/api', require('./routes/baseline'))
 app.use('/api', require('./routes/baselineUpload'))
@@ -41,44 +51,82 @@ app.use('/api', require('./routes/ai'))
 app.use('/api', require('./routes/genome'))
 app.use('/api', require('./routes/chat'))
 
-// Alert email endpoint — called by Logic App or directly
-app.post('/api/alert/email', express.json(), async (req, res) => {
-  const { sendDriftAlert } = require('./services/alertService')
-  await sendDriftAlert(req.body).catch(() => {})
-  res.json({ sent: true })
-})
 
-// Task 1: seed the live state cache so the next change event has a "previous" state
-// Called by frontend immediately after config is loaded on Submit
+
+
+// ── POST /api/cache-state START ──────────────────────────────────────────────
+// Seeds the live state cache with the current resource config so the first change event has a diff
 app.post('/api/cache-state', express.json(), (req, res) => {
+  console.log('[POST /api/cache-state] starts')
   const { resourceId, state } = req.body
-  if (!resourceId || !state) return res.status(400).json({ error: 'resourceId and state required' })
+  if (!resourceId || !state) {
+    console.log('[POST /api/cache-state] ends — missing resourceId or state')
+    return res.status(400).json({ error: 'resourceId and state required' })
+  }
   const { liveStateCache, cacheSet } = require('./services/queuePoller')
   const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag']
+
+  // ── strip (inline) START ───────────────────────────────────────────────────
+  // Strips volatile fields from the state before caching to avoid false-positive diffs
   function strip(obj) {
-    if (Array.isArray(obj)) return obj.map(strip)
-    if (obj && typeof obj === 'object')
-      return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)]))
+    console.log('[cache-state strip] starts')
+    if (Array.isArray(obj)) {
+      const r = obj.map(strip)
+      console.log('[cache-state strip] ends — array')
+      return r
+    }
+    if (obj && typeof obj === 'object') {
+      const r = Object.fromEntries(
+        Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)])
+      )
+      console.log('[cache-state strip] ends — object')
+      return r
+    }
+    console.log('[cache-state strip] ends — primitive')
     return obj
   }
+  // ── strip (inline) END ─────────────────────────────────────────────────────
+
   const stripped = strip(state)
   liveStateCache[resourceId] = stripped
   cacheSet(resourceId, stripped).catch(() => {})
   res.json({ cached: true, resourceId })
+  console.log('[POST /api/cache-state] ends — cached resourceId:', resourceId)
 })
+// ── POST /api/cache-state END ────────────────────────────────────────────────
 
-// SignalR webhook — Function App posts drift events here
+
+// ── POST /internal/drift-event START ────────────────────────────────────────
+// Internal endpoint called by the Function App to push drift events to connected frontend clients
+// Cross-path dedup: prevents same event emitted by both queue poller and Function App
+const _emittedEvents = new Map()
+function isAlreadyEmitted(event) {
+  const key = (event.eventId || event.resourceId) + ':' + (event.eventTime || '')
+  if (_emittedEvents.has(key)) return true
+  _emittedEvents.set(key, Date.now())
+  const cutoff = Date.now() - 30000
+  for (const [k, ts] of _emittedEvents) if (ts < cutoff) _emittedEvents.delete(k)
+  return false
+}
+// Expose so queue poller can pre-register events it already emitted
+global._markEmitted = (event) => isAlreadyEmitted(event)
+
 app.post('/internal/drift-event', express.json(), (req, res) => {
+  console.log('[POST /internal/drift-event] starts')
   const event = req.body
   if (event?.subscriptionId) {
+    if (isAlreadyEmitted(event)) { res.sendStatus(200); return }
     const room = event.resourceGroup
-      ? `${event.subscriptionId}:${event.resourceGroup}`
-      : event.subscriptionId
+      ? `${event.subscriptionId}:${event.resourceGroup}`.toLowerCase()
+      : event.subscriptionId.toLowerCase()
     io.to(room).emit('resourceChange', event)  // unified event name
-    sendDriftAlert(event).catch(err => console.error('[Alert]', err.message))
+    const logicAppUrl = process.env.ALERT_LOGIC_APP_URL
+    if (logicAppUrl && ['critical', 'high'].includes(event.severity)) fetch(logicAppUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event) }).catch(() => {})
   }
   res.sendStatus(200)
+  console.log('[POST /internal/drift-event] ends')
 })
+// ── POST /internal/drift-event END ──────────────────────────────────────────
 
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {

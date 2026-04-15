@@ -14,6 +14,8 @@ function getQueueClient() {
   }
   return _queueClient
 }
+// ── getQueueClient END ───────────────────────────────────────────────────────
+
 
 // ── Persistent state cache (Azure Table Storage + in-memory L1) ───────────────
 const _mem = {}
@@ -33,6 +35,7 @@ async function cacheGet(resourceId) {
   } catch {}
   return null
 }
+// ── resolveIdentity END ──────────────────────────────────────────────────────
 
 async function cacheSet(resourceId, state) {
   _mem[resourceId] = state
@@ -52,6 +55,7 @@ const liveStateCache = new Proxy(_mem, {
 
 // ── Message parser ────────────────────────────────────────────────────────────
 function parseMessage(msg) {
+  console.log('[parseMessage] starts')
   try {
     const raw    = JSON.parse(Buffer.from(msg.messageText, 'base64').toString('utf-8'))
     const event  = Array.isArray(raw) ? raw[0] : raw
@@ -74,7 +78,7 @@ function parseMessage(msg) {
       || event.data?.caller
       || ''
 
-    return {
+    const result = {
       eventId:        event.id,
       eventType:      event.eventType,
       eventTime:      event.eventTime || new Date().toISOString(),
@@ -85,8 +89,15 @@ function parseMessage(msg) {
       status:         event.data?.status || 'Succeeded',
       caller,
     }
-  } catch { return null }
+    console.log('[parseMessage] ends — resourceId:', result.resourceId)
+    return result
+  } catch {
+    console.log('[parseMessage] ends — parse failed, returning null')
+    return null
+  }
 }
+// ── parseMessage END ─────────────────────────────────────────────────────────
+
 
 // ── Deduplication: same resource+operation within 10s = same event ────────────
 const _dedup = new Map()
@@ -99,6 +110,7 @@ function isDuplicate(event) {
   for (const [k, ts] of _dedup) if (ts < cutoff) _dedup.delete(k)
   return false
 }
+// ── isDuplicate END ──────────────────────────────────────────────────────────
 
 // ── Enrich event with diff and resolved identity ──────────────────────────────
 async function enrichWithDiff(event) {
@@ -123,18 +135,9 @@ async function enrichWithDiff(event) {
 
   await cacheSet(event.resourceId, current)
 
-  if (changes.length > 0) {
-    try {
-      const { saveGenomeSnapshot } = require('./blobService')
-      const actor = resolvedCaller || event.caller || 'system'
-      saveGenomeSnapshot(event.subscriptionId, event.resourceId, current,
-        `auto: ${changes.length} change(s) by ${actor}`).catch(() => {})
-    } catch {}
-  }
-
   return {
     ...event,
-    caller:      resolvedCaller || event.caller || 'System',
+    caller:      resolvedCaller || event.caller,
     liveState:   current,
     changes,
     changeCount: changes.length,
@@ -144,6 +147,7 @@ async function enrichWithDiff(event) {
 
 // ── Poller ────────────────────────────────────────────────────────────────────
 function startQueuePoller() {
+  console.log('[startQueuePoller] starts')
   const interval = parseInt(process.env.QUEUE_POLL_INTERVAL_MS || '5000', 10)
   const client   = getQueueClient()
 
@@ -152,18 +156,23 @@ function startQueuePoller() {
       const { receivedMessageItems } = await client.receiveMessages({ numberOfMessages: 32, visibilityTimeout: 30 })
       for (const msg of receivedMessageItems) {
         const event = parseMessage(msg)
-        if (!event) continue
-        await client.deleteMessage(msg.messageId, msg.popReceipt)
-        if (isDuplicate(event)) continue
+        if (!event) { await client.deleteMessage(msg.messageId, msg.popReceipt); continue }
+        if (isDuplicate(event)) { await client.deleteMessage(msg.messageId, msg.popReceipt); continue }
 
         enrichWithDiff(event)
-          .then(enriched => {
+          .then(async enriched => {
+            await client.deleteMessage(msg.messageId, msg.popReceipt)
             if (!global.io) return
+            const rgRoom = enriched.resourceGroup ? `${enriched.subscriptionId}:${enriched.resourceGroup}`.toLowerCase() : null
+            const resName = enriched.resourceId?.split('/').pop()?.toLowerCase()
             const rooms = [
-              enriched.subscriptionId,
-              enriched.resourceGroup ? `${enriched.subscriptionId}:${enriched.resourceGroup}` : null,
+              enriched.subscriptionId?.toLowerCase(),
+              rgRoom,
+              rgRoom && resName ? `${rgRoom}:${resName}` : null,
             ].filter(Boolean)
             rooms.forEach(room => global.io.to(room).emit('resourceChange', enriched))
+            // Pre-register in cross-path dedup so /internal/drift-event skips this event
+            if (global._markEmitted) global._markEmitted(enriched)
           })
           .catch(() => {})
       }
@@ -172,5 +181,6 @@ function startQueuePoller() {
 
   console.log(`[ADIP] Queue poller started — interval ${interval}ms`)
 }
+// ── startQueuePoller END ─────────────────────────────────────────────────────
 
 module.exports = { startQueuePoller, liveStateCache, cacheSet }

@@ -5,7 +5,6 @@ import {
   fetchResources as apiFetchResources,
 } from '../services/api'
 
-// ── Demo fallback — mirrors the existing dummy data shape ──────────────────
 const DEMO_SUBS = [
   { id: 'sub-1', name: 'Production - Enterprise (a1b2c3d4-...)' },
   { id: 'sub-2', name: 'Development - Team (e5f6g7h8-...)' },
@@ -22,15 +21,16 @@ const DEMO_RESOURCES = {
   'rg-3': [{ id: 'r-6', name: 'vnet-prod-main', type: 'Virtual Network' }, { id: 'r-7', name: 'nsg-prod-frontend', type: 'Network Security Group' }],
 }
 
-export function useAzureScope() {
+
+// ── useAzureScope START ──────────────────────────────────────────────────────
+// Accepts persisted resourceGroups/resources + their setters from context
+// so dropdown options survive navigation and stop
+export function useAzureScope({ resourceGroups, setResourceGroups, resources, setResources, savedSubscription, savedResourceGroup }) {
   const [subscriptions, setSubscriptions] = useState([])
-  const [resourceGroups, setResourceGroups] = useState([])
-  const [resources, setResources] = useState([])
   const [loading, setLoading] = useState(false)
   const [scopeError, setScopeError] = useState(null)
   const [isDemoMode, setIsDemoMode] = useState(false)
 
-  // Load subscriptions on mount — falls back to demo data if API is unreachable
   useEffect(() => {
     const load = async () => {
       setLoading(true)
@@ -43,7 +43,6 @@ export function useAzureScope() {
         )
         setIsDemoMode(false)
       } catch {
-        // Backend not yet connected — run in demo mode silently
         setSubscriptions(DEMO_SUBS)
         setIsDemoMode(true)
       } finally {
@@ -52,6 +51,20 @@ export function useAzureScope() {
     }
     load()
   }, [])
+
+  // Re-fetch RGs on mount if a subscription was already selected (restores after navigation)
+  useEffect(() => {
+    if (savedSubscription && resourceGroups.length === 0) {
+      fetchRGs(savedSubscription)
+    }
+  }, [savedSubscription]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch resources on mount if a RG was already selected
+  useEffect(() => {
+    if (savedSubscription && savedResourceGroup && resources.length === 0) {
+      fetchResources(savedSubscription, savedResourceGroup)
+    }
+  }, [savedSubscription, savedResourceGroup]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchRGs = useCallback(async (subscriptionId) => {
     if (!subscriptionId) { setResourceGroups([]); setResources([]); return }
@@ -72,7 +85,7 @@ export function useAzureScope() {
     } finally {
       setLoading(false)
     }
-  }, [isDemoMode])
+  }, [isDemoMode, setResourceGroups, setResources])
 
   const fetchResources = useCallback(async (subscriptionId, resourceGroupId) => {
     if (!resourceGroupId) { setResources([]); return }
@@ -92,7 +105,8 @@ export function useAzureScope() {
     } finally {
       setLoading(false)
     }
-  }, [isDemoMode])
+  }, [isDemoMode, setResources])
 
   return { subscriptions, resourceGroups, resources, loading, scopeError, isDemoMode, fetchRGs, fetchResources }
 }
+// ── useAzureScope END ────────────────────────────────────────────────────────

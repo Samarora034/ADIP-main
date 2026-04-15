@@ -1,15 +1,29 @@
-const router = require('express').Router()
-const { getResourceConfig } = require('../services/azureResourceService')
-
-router.get('/configuration', async (req, res) => {
+ 
+// ============================================================
+// FILE: routes/configuration.js
+// ============================================================
+const router_configuration = require('express').Router()
+const { getResourceConfig: getResourceConfigForRoute } = require('../services/azureResourceService')
+ 
+// ── GET /api/configuration START ─────────────────────────────────────────────
+// Fetches the live ARM configuration for a resource or all resources in a resource group
+router_configuration.get('/configuration', async (req, res) => {
+  console.log('[GET /configuration] starts')
   const { subscriptionId, resourceGroupId, resourceId } = req.query
-  if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
+  if (!subscriptionId || !resourceGroupId) {
+    console.log('[GET /configuration] ends — missing required params')
+    return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
+  }
   try {
-    const config = await getResourceConfig(subscriptionId, resourceGroupId, resourceId || null)
+    const config = await getResourceConfigForRoute(subscriptionId, resourceGroupId, resourceId || null)
     res.json(config)
+    console.log('[GET /configuration] ends')
   } catch (err) {
+    console.log('[GET /configuration] ends — error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })
-
-module.exports = router
+// ── GET /api/configuration END ───────────────────────────────────────────────
+ 
+module.exports = router_configuration
+ 

@@ -1,6 +1,6 @@
 'use strict'
 const router = require('express').Router()
-const { saveGenomeSnapshot, listGenomeSnapshots, getGenomeSnapshot, saveBaseline } = require('../services/blobService')
+const { saveGenomeSnapshot, listGenomeSnapshots, getGenomeSnapshot, saveBaseline, deleteGenomeSnapshot } = require('../services/blobService')
 const { getResourceConfig, getApiVersion } = require('../services/azureResourceService')
 const { strip } = require('../shared/diff')
 const { ResourceManagementClient } = require('@azure/arm-resources')
@@ -9,20 +9,30 @@ const { DefaultAzureCredential }   = require('@azure/identity')
 // Is this a full ARM resource ID or just a resource group name?
 const isArmId = (id) => id && id.startsWith('/subscriptions/')
 
-// GET /api/genome?subscriptionId=&resourceId=&limit=
+
+// ── GET /api/genome START ────────────────────────────────────────────────────
+// Returns all versioned configuration snapshots for a resource, sorted newest-first
 router.get('/genome', async (req, res) => {
+  console.log('[GET /genome] starts')
   const { subscriptionId, resourceId, limit } = req.query
-  if (!subscriptionId) return res.status(400).json({ error: 'subscriptionId required' })
+  if (!subscriptionId) {
+    console.log('[GET /genome] ends — missing subscriptionId')
+    return res.status(400).json({ error: 'subscriptionId required' })
+  }
   try {
     res.json(await listGenomeSnapshots(subscriptionId, resourceId, Number(limit) || 50))
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
+// ── GET /api/genome END ──────────────────────────────────────────────────────
 
 // POST /api/genome/save
 router.post('/genome/save', async (req, res) => {
+  console.log('[POST /genome/save] starts')
   const { subscriptionId, resourceGroupId, resourceId, label } = req.body
-  if (!subscriptionId || !resourceGroupId || !resourceId)
+  if (!subscriptionId || !resourceGroupId || !resourceId) {
+    console.log('[POST /genome/save] ends — missing required fields')
     return res.status(400).json({ error: 'subscriptionId, resourceGroupId and resourceId required' })
+  }
   try {
     // For full ARM IDs fetch the specific resource; for RG-level fetch the whole group
     const liveConfig = isArmId(resourceId)
@@ -33,29 +43,41 @@ router.post('/genome/save', async (req, res) => {
     res.json(snapshot)
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
+// ── POST /api/genome/save END ────────────────────────────────────────────────
 
 // POST /api/genome/promote — make snapshot the golden baseline
 router.post('/genome/promote', async (req, res) => {
+  console.log('[POST /genome/promote] starts')
   const { subscriptionId, resourceGroupId, resourceId, blobKey } = req.body
-  if (!subscriptionId || !resourceId || !blobKey)
+  if (!subscriptionId || !resourceId || !blobKey) {
+    console.log('[POST /genome/promote] ends — missing required fields')
     return res.status(400).json({ error: 'subscriptionId, resourceId and blobKey required' })
+  }
   try {
     const snapshot = await getGenomeSnapshot(blobKey)
-    if (!snapshot?.resourceState) return res.status(404).json({ error: 'Snapshot not found' })
+    if (!snapshot?.resourceState) {
+      console.log('[POST /genome/promote] ends — snapshot not found')
+      return res.status(404).json({ error: 'Snapshot not found' })
+    }
     await saveBaseline(subscriptionId, resourceGroupId || '', resourceId, snapshot.resourceState)
     res.json({ promoted: true, resourceId, blobKey })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
+// ── POST /api/genome/promote END ─────────────────────────────────────────────
 
 // POST /api/genome/rollback — revert resource to snapshot via ARM PUT
 router.post('/genome/rollback', async (req, res) => {
+  console.log('[POST /genome/rollback] starts')
   const { subscriptionId, resourceGroupId, resourceId, blobKey } = req.body
-  if (!subscriptionId || !resourceGroupId || !resourceId || !blobKey)
-    return res.status(400).json({ error: 'subscriptionId, resourceGroupId, resourceId and blobKey required' })
-
+  if (!subscriptionId || !resourceGroupId || !resourceId || !blobKey) {
+    console.log('[POST /genome/rollback] ends — missing required fields')
+    return res.status(400).json({ error: 'subscriptionId, resourceGroupId, resourceId and blobKey required' })}
   try {
     const snapshot = await getGenomeSnapshot(blobKey)
-    if (!snapshot?.resourceState) return res.status(404).json({ error: 'Snapshot not found' })
+    if (!snapshot?.resourceState) {
+      console.log('[POST /genome/rollback] ends — snapshot not found')
+      return res.status(404).json({ error: 'Snapshot not found' })
+    }
 
     const credential = new DefaultAzureCredential()
     const armClient  = new ResourceManagementClient(credential, subscriptionId)
@@ -93,6 +115,17 @@ router.post('/genome/rollback', async (req, res) => {
     }
     await armClient.resources.beginCreateOrUpdateAndWait(rgName, provider, '', type, name, apiVersion, { ...state, location })
     res.json({ rolledBack: true, resourceId, blobKey, savedAt: snapshot.savedAt })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+// ── POST /api/genome/rollback END ────────────────────────────────────────────
+
+// POST /api/genome/delete
+router.post('/genome/delete', async (req, res) => {
+  const { subscriptionId, blobKey } = req.body
+  if (!subscriptionId || !blobKey) return res.status(400).json({ error: 'subscriptionId and blobKey required' })
+  try {
+    await deleteGenomeSnapshot(subscriptionId, blobKey)
+    res.json({ deleted: true, blobKey })
   } catch (err) { res.status(500).json({ error: err.message }) }
 })
 

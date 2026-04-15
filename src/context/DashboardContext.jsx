@@ -10,35 +10,42 @@ function usePersisted(key, defaultVal) {
 }
 
 export function DashboardProvider({ children }) {
-  const [subscription,  setSubscription]  = usePersisted('adip.sub', '')
-  const [resourceGroup, setResourceGroup] = usePersisted('adip.rg', '')
-  const [resource,      setResource]      = usePersisted('adip.resource', '')
-  const [isScanning,    setIsScanning]    = useState(false)
-  const [isMonitoring,  setIsMonitoring]  = useState(false)
-  const [isSubmitted,   setIsSubmitted]   = useState(false)
-  const [configData,    setConfigData]    = useState(null)
-  const [liveEvents,    setLiveEvents]    = useState([])
-  const [scanProgress,  setScanProgress]  = useState(0)
-  const [policyData,    setPolicyData]    = useState(null)
-  const [anomalies,     setAnomalies]     = useState([])
+  const [subscription,   setSubscription]   = usePersisted('adip.sub', '')
+  const [resourceGroup,  setResourceGroup]  = usePersisted('adip.rg', '')
+  const [resource,       setResource]       = usePersisted('adip.resource', '')
+  // Persist dropdown options so they survive navigation and stop
+  const [resourceGroups, setResourceGroups] = usePersisted('adip.rgs', [])
+  const [resources,      setResources]      = usePersisted('adip.resources', [])
+  const [isScanning,     setIsScanning]     = useState(false)
+  const [isMonitoring,   setIsMonitoring]   = useState(false)
+  const [isSubmitted,    setIsSubmitted]    = useState(false)
+  const [configData,     setConfigData]     = useState(null)
+  const [liveEvents,     setLiveEvents]     = usePersisted('adip.liveEvents', [])
+  const [driftEvents,    setDriftEvents]    = usePersisted('adip.driftEvents', [])
+  const [scanProgress,   setScanProgress]   = useState(0)
+  const [policyData,     setPolicyData]     = useState(null)
+  const [anomalies,      setAnomalies]      = useState([])
   const scanInterval = useRef(null)
   const monitorScope = useRef(null)
   const jsonTreeRef  = useRef(null)
 
   return (
     <DashboardContext.Provider value={{
-      subscription,  setSubscription,
-      resourceGroup, setResourceGroup,
-      resource,      setResource,
-      isScanning,    setIsScanning,
-      isMonitoring,  setIsMonitoring,
-      isSubmitted,   setIsSubmitted,
-      configData,    setConfigData,
-      liveEvents,    setLiveEvents,
-      scanProgress,  setScanProgress,
-      policyData,    setPolicyData,
-      anomalies,     setAnomalies,
-      scanInterval,  monitorScope, jsonTreeRef,
+      subscription,   setSubscription,
+      resourceGroup,  setResourceGroup,
+      resource,       setResource,
+      resourceGroups, setResourceGroups,
+      resources,      setResources,
+      isScanning,     setIsScanning,
+      isMonitoring,   setIsMonitoring,
+      isSubmitted,    setIsSubmitted,
+      configData,     setConfigData,
+      liveEvents,     setLiveEvents,
+      driftEvents,    setDriftEvents,
+      scanProgress,   setScanProgress,
+      policyData,     setPolicyData,
+      anomalies,      setAnomalies,
+      scanInterval,   monitorScope, jsonTreeRef,
     }}>
       {children}
     </DashboardContext.Provider>

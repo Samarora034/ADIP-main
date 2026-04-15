@@ -1,37 +1,20 @@
 /**
  * Azure Drift Intelligence Platform — API Service Layer
- * 
- * This module provides a centralized service layer for all backend communication.
- * The workflow is:
- *   1. Button clicked in UI
- *   2. fetch() sends HTTPS request to Azure Function
- *   3. Azure Function receives it and acts as decision engine
- *   4. Azure Function triggers the appropriate Logic App
- *   5. Logic App processes data and returns results
- *   6. Response is sent back to the UI
- * 
- * CONFIGURATION:
- * Set VITE_API_BASE_URL in .env to your Azure Function App URL.
- * Example: VITE_API_BASE_URL=https://your-function-app.azurewebsites.net/api
+ * All backend communication is centralised here.
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
-/**
- * Generic fetch wrapper with error handling.
- * All API calls go through this – making it easy to add auth tokens,
- * logging, retries, etc. in one place.
- */
+
+// ── apiRequest START ─────────────────────────────────────────────────────────
+// Generic fetch wrapper used by all API calls — handles headers, error checking, and JSON parsing
 async function apiRequest(endpoint, options = {}) {
+  console.log('[apiRequest] starts — endpoint:', endpoint, 'method:', options.method || 'GET')
   const url = `${API_BASE_URL}${endpoint}`
-  
+
   const defaultHeaders = {
     'Content-Type': 'application/json',
   }
-
-  // When SSO is integrated, inject the bearer token here:
-  // const token = await getAccessToken()
-  // if (token) defaultHeaders['Authorization'] = `Bearer ${token}`
 
   const config = {
     ...options,
@@ -43,280 +26,289 @@ async function apiRequest(endpoint, options = {}) {
 
   try {
     const response = await fetch(url, config)
-    
+
     if (!response.ok) {
       const errorBody = await response.text()
+      console.log('[apiRequest] ends — HTTP error', response.status)
       throw new Error(`API Error ${response.status}: ${errorBody}`)
     }
 
-    return await response.json()
+    const data = await response.json()
+    console.log('[apiRequest] ends — success')
+    return data
   } catch (error) {
     console.error(`[API] ${options.method || 'GET'} ${endpoint} failed:`, error)
+    console.log('[apiRequest] ends — caught error')
     throw error
   }
 }
+// ── apiRequest END ───────────────────────────────────────────────────────────
 
-// ============================
-// Subscription & Resource APIs
-// ============================
 
-/**
- * Fetch available Azure subscriptions.
- * Backend flow: Azure Function → Logic App → Azure Management API
- */
+// ── fetchSubscriptions START ─────────────────────────────────────────────────
+// Returns all Azure subscriptions accessible to the logged-in credential
 export async function fetchSubscriptions() {
-  return apiRequest('/subscriptions')
+  console.log('[fetchSubscriptions] starts')
+  const result = await apiRequest('/subscriptions')
+  console.log('[fetchSubscriptions] ends')
+  return result
 }
+// ── fetchSubscriptions END ───────────────────────────────────────────────────
 
-/**
- * Fetch resource groups for a given subscription.
- */
+
+// ── fetchResourceGroups START ────────────────────────────────────────────────
+// Returns resource groups for a given subscription ID
 export async function fetchResourceGroups(subscriptionId) {
-  return apiRequest(`/subscriptions/${subscriptionId}/resource-groups`)
+  console.log('[fetchResourceGroups] starts — subscriptionId:', subscriptionId)
+  const result = await apiRequest(`/subscriptions/${subscriptionId}/resource-groups`)
+  console.log('[fetchResourceGroups] ends')
+  return result
 }
+// ── fetchResourceGroups END ──────────────────────────────────────────────────
 
-/**
- * Fetch resources within a resource group.
- */
+
+// ── fetchResources START ─────────────────────────────────────────────────────
+// Returns resources in a given resource group
 export async function fetchResources(subscriptionId, resourceGroupId) {
-  return apiRequest(`/subscriptions/${subscriptionId}/resource-groups/${resourceGroupId}/resources`)
+  console.log('[fetchResources] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupId)
+  const result = await apiRequest(`/subscriptions/${subscriptionId}/resource-groups/${resourceGroupId}/resources`)
+  console.log('[fetchResources] ends')
+  return result
 }
+// ── fetchResources END ───────────────────────────────────────────────────────
 
-// ============================
-// Configuration & Drift APIs
-// ============================
 
-/**
- * Fetch the full JSON configuration of a resource or resource group.
- * This is displayed in the Configuration panel.
- */
+// ── fetchResourceConfiguration START ────────────────────────────────────────
+// Fetches the full live JSON configuration for a resource or resource group
 export async function fetchResourceConfiguration(subscriptionId, resourceGroupId, resourceId = null) {
+  console.log('[fetchResourceConfiguration] starts — subscriptionId:', subscriptionId, 'resourceId:', resourceId)
   const params = new URLSearchParams({
     subscriptionId,
     resourceGroupId,
     ...(resourceId && { resourceId }),
   })
-  return apiRequest(`/configuration?${params}`)
+  const result = await apiRequest(`/configuration?${params}`)
+  console.log('[fetchResourceConfiguration] ends')
+  return result
 }
+// ── fetchResourceConfiguration END ──────────────────────────────────────────
 
-/**
- * Start a drift scan. Returns a scan ID for polling.
- * Backend flow: Azure Function (decision engine) → triggers Logic App scan workflow
- */
-export async function startDriftScan(subscriptionId, resourceGroupId, resourceId = null) {
-  return apiRequest('/scan/start', {
-    method: 'POST',
-    body: JSON.stringify({
-      subscriptionId,
-      resourceGroupId,
-      resourceId,
-    }),
-  })
-}
 
-/**
- * Stop an in-progress drift scan.
- */
-export async function stopDriftScan(scanId) {
-  return apiRequest(`/scan/${scanId}/stop`, {
-    method: 'POST',
-  })
-}
 
-/**
- * Poll for scan status and live events.
- * Returns { status, progress, events, results }
- */
-export async function getScanStatus(scanId) {
-  return apiRequest(`/scan/${scanId}/status`)
-}
-// ============================
-// Baseline Management
-// ============================
 
-/**
- * Fetch the active golden baseline for a specific resource.
- * Returns { resourceState, version, approvedAt } or null if no baseline exists.
- */
+
+
+
+
+// ── fetchBaseline START ──────────────────────────────────────────────────────
+// Fetches the active golden baseline for a resource
 export async function fetchBaseline(subscriptionId, resourceId) {
+  console.log('[fetchBaseline] starts — subscriptionId:', subscriptionId, 'resourceId:', resourceId)
   const params = new URLSearchParams({ subscriptionId, resourceId })
-  return apiRequest(`/baselines?${params}`)
+  const result = await apiRequest(`/baselines?${params}`)
+  console.log('[fetchBaseline] ends')
+  return result
 }
+// ── fetchBaseline END ────────────────────────────────────────────────────────
 
-/**
- * Promote the resource's current live state as the new golden baseline.
- * Deactivates any previous baseline for that resource in Cosmos DB.
- */
-export async function promoteBaseline(subscriptionId, resourceGroupId, resourceId, resourceState) {
-  return apiRequest('/baselines', {
+
+
+
+
+
+// ── remediateToBaseline START ────────────────────────────────────────────────
+// Immediately reverts a resource to its golden baseline via ARM PUT
+export async function remediateToBaseline(subscriptionId, resourceGroupId, resourceId) {
+  console.log('[remediateToBaseline] starts — resourceId:', resourceId)
+  const result = await apiRequest('/remediate', {
     method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, resourceState }),
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
   })
+  console.log('[remediateToBaseline] ends')
+  return result
 }
+// ── remediateToBaseline END ──────────────────────────────────────────────────
 
-// ============================
-// Drift Event History
-// ============================
 
-/**
- * Fetch paginated drift event history from Cosmos DB.
- */
-export async function fetchDriftEvents(subscriptionId, { resourceGroup, severity, limit = 50 } = {}) {
+// ── requestRemediation START ─────────────────────────────────────────────────
+// Sends an approval email for drift remediation (used for non-low severity)
+export async function requestRemediation(payload) {
+  console.log('[requestRemediation] starts')
+  const result = await apiRequest('/remediate-request', { method: 'POST', body: JSON.stringify(payload) })
+  console.log('[requestRemediation] ends')
+  return result
+}
+// ── requestRemediation END ───────────────────────────────────────────────────
+
+
+// ── uploadBaseline START ─────────────────────────────────────────────────────
+// Uploads a custom JSON file as the golden baseline for a resource
+export async function uploadBaseline(subscriptionId, resourceGroupId, resourceId, baselineData) {
+  console.log('[uploadBaseline] starts — resourceId:', resourceId)
+  const result = await apiRequest('/baselines/upload', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, baselineData }),
+  })
+  console.log('[uploadBaseline] ends')
+  return result
+}
+// ── uploadBaseline END ───────────────────────────────────────────────────────
+
+
+
+
+// ── cacheState START ─────────────────────────────────────────────────────────
+// Sends the current resource config to the backend cache so first change has a diff
+export async function cacheState(resourceId, state) {
+  console.log('[cacheState] starts — resourceId:', resourceId)
+  const result = await apiRequest('/cache-state', {
+    method: 'POST',
+    body: JSON.stringify({ resourceId, state }),
+  })
+  console.log('[cacheState] ends')
+  return result
+}
+// ── cacheState END ───────────────────────────────────────────────────────────
+
+
+// ── stopMonitoring START ─────────────────────────────────────────────────────
+// Stops the server-side polling monitor for the selected scope
+export async function stopMonitoring(subscriptionId, resourceGroupId, resourceId = null) {
+  console.log('[stopMonitoring] starts — subscriptionId:', subscriptionId)
+  const result = await apiRequest('/monitor/stop', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
+  })
+  console.log('[stopMonitoring] ends')
+  return result
+}
+// ── stopMonitoring END ───────────────────────────────────────────────────────
+
+
+
+
+// ── fetchPolicyCompliance START ──────────────────────────────────────────────
+// Returns Azure Policy compliance state for a resource or resource group
+export async function fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId = null) {
+  console.log('[fetchPolicyCompliance] starts — subscriptionId:', subscriptionId)
+  const params = new URLSearchParams({ subscriptionId, resourceGroupId })
+  if (resourceId) params.set('resourceId', resourceId)
+  const result = await apiRequest(`/policy/compliance?${params}`)
+  console.log('[fetchPolicyCompliance] ends')
+  return result
+}
+// ── fetchPolicyCompliance END ────────────────────────────────────────────────
+
+
+// ── fetchAiExplanation START ─────────────────────────────────────────────────
+// Requests an AI-generated plain-English drift explanation from Azure OpenAI
+export async function fetchAiExplanation(record) {
+  console.log('[fetchAiExplanation] starts')
+  const result = await apiRequest('/ai/explain', { method: 'POST', body: JSON.stringify(record) })
+  console.log('[fetchAiExplanation] ends')
+  return result
+}
+// ── fetchAiExplanation END ───────────────────────────────────────────────────
+
+
+
+
+// ── fetchAiRecommendation START ──────────────────────────────────────────────
+// Requests an AI remediation recommendation explaining what revert will do
+export async function fetchAiRecommendation(record) {
+  console.log('[fetchAiRecommendation] starts')
+  const result = await apiRequest('/ai/recommend', { method: 'POST', body: JSON.stringify(record) })
+  console.log('[fetchAiRecommendation] ends')
+  return result
+}
+// ── fetchAiRecommendation END ────────────────────────────────────────────────
+
+
+// ── fetchAnomalies START ─────────────────────────────────────────────────────
+// Requests AI anomaly detection analysis over recent drift history
+export async function fetchAnomalies(subscriptionId) {
+  console.log('[fetchAnomalies] starts — subscriptionId:', subscriptionId)
+  const result = await apiRequest(`/ai/anomalies?subscriptionId=${subscriptionId}`)
+  console.log('[fetchAnomalies] ends')
+  return result
+}
+// ── fetchAnomalies END ───────────────────────────────────────────────────────
+
+
+// ── fetchGenomeSnapshots START ───────────────────────────────────────────────
+// Returns the versioned snapshot history for a resource from the genome container
+export async function fetchGenomeSnapshots(subscriptionId, resourceId, limit = 50) {
+  console.log('[fetchGenomeSnapshots] starts — resourceId:', resourceId)
   const params = new URLSearchParams({ subscriptionId, limit })
-  if (resourceGroup) params.set('resourceGroup', resourceGroup)
-  if (severity) params.set('severity', severity)
-  return apiRequest(`/drift-events?${params}`)
+  if (resourceId) params.set('resourceId', resourceId)
+  const result = await apiRequest(`/genome?${params}`)
+  console.log('[fetchGenomeSnapshots] ends')
+  return result
 }
-// ============================
-// Authentication (SSO-ready)
-// ============================
+// ── fetchGenomeSnapshots END ─────────────────────────────────────────────────
 
-/**
- * Placeholder for SSO integration.
- * When implementing, use @azure/msal-browser:
- * 
- * import { PublicClientApplication } from '@azure/msal-browser'
- * 
- * const msalConfig = {
- *   auth: {
- *     clientId: import.meta.env.VITE_AZURE_CLIENT_ID,
- *     authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_TENANT_ID}`,
- *     redirectUri: window.location.origin,
- *   }
- * }
- * 
- * export const msalInstance = new PublicClientApplication(msalConfig)
- * 
- * export async function loginWithMicrosoft() {
- *   const result = await msalInstance.loginPopup({
- *     scopes: ['user.read', 'https://management.azure.com/.default']
- *   })
- *   return result
- * }
- * 
- * export async function getAccessToken() {
- *   const accounts = msalInstance.getAllAccounts()
- *   if (accounts.length === 0) return null
- *   const result = await msalInstance.acquireTokenSilent({
- *     scopes: ['https://management.azure.com/.default'],
- *     account: accounts[0]
- *   })
- *   return result.accessToken
- * }
- */
+
+// ── saveGenomeSnapshot START ─────────────────────────────────────────────────
+// Saves the current live config as a labelled genome snapshot
+export async function saveGenomeSnapshot(subscriptionId, resourceGroupId, resourceId, label = '') {
+  console.log('[saveGenomeSnapshot] starts — resourceId:', resourceId, 'label:', label)
+  const result = await apiRequest('/genome/save', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, label }),
+  })
+  console.log('[saveGenomeSnapshot] ends')
+  return result
+}
+// ── saveGenomeSnapshot END ───────────────────────────────────────────────────
+
+
+// ── promoteGenomeSnapshot START ──────────────────────────────────────────────
+// Promotes a genome snapshot to the golden baseline
+export async function promoteGenomeSnapshot(subscriptionId, resourceGroupId, resourceId, blobKey) {
+  console.log('[promoteGenomeSnapshot] starts — blobKey:', blobKey)
+  const result = await apiRequest('/genome/promote', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, blobKey }),
+  })
+  console.log('[promoteGenomeSnapshot] ends')
+  return result
+}
+// ── promoteGenomeSnapshot END ────────────────────────────────────────────────
+
+
+// ── rollbackToSnapshot START ─────────────────────────────────────────────────
+// Rolls back an Azure resource to a specific genome snapshot via ARM PUT
+export async function rollbackToSnapshot(subscriptionId, resourceGroupId, resourceId, blobKey) {
+  console.log('[rollbackToSnapshot] starts — blobKey:', blobKey)
+  const result = await apiRequest('/genome/rollback', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, blobKey }),
+  })
+  console.log('[rollbackToSnapshot] ends')
+  return result
+}
+// ── rollbackToSnapshot END ───────────────────────────────────────────────────
+
+// ── deleteGenomeSnapshot START ────────────────────────────────────────────────
+// Deletes a genome snapshot from blob storage and its index entry
+export async function deleteGenomeSnapshot(subscriptionId, blobKey) {
+  console.log('[deleteGenomeSnapshot] starts — blobKey:', blobKey)
+  const result = await apiRequest('/genome/delete', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, blobKey }),
+  })
+  console.log('[deleteGenomeSnapshot] ends')
+  return result
+}
+// ── deleteGenomeSnapshot END ──────────────────────────────────────────────────
+
+
+
+
 
 export default {
   fetchSubscriptions,
   fetchResourceGroups,
   fetchResources,
   fetchResourceConfiguration,
-  startDriftScan,
-  stopDriftScan,
-  getScanStatus,
-}
-
-export async function remediateToBaseline(subscriptionId, resourceGroupId, resourceId) {
-  return apiRequest('/remediate', {
-    method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
-  })
-}
-
-export async function requestRemediation(payload) {
-  return apiRequest('/remediate-request', { method: 'POST', body: JSON.stringify(payload) })
-}
-
-export async function uploadBaseline(subscriptionId, resourceGroupId, resourceId, baselineData) {
-  return apiRequest('/baselines/upload', {
-    method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, baselineData }),
-  })
-}
-
-// ============================
-// Real-time Monitoring
-// ============================
-
-export async function startMonitoring(subscriptionId, resourceGroupId, resourceId = null) {
-  return apiRequest('/monitor/start', {
-    method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, intervalMs: 30000 }),
-  })
-}
-
-export async function cacheState(resourceId, state) {
-  return apiRequest('/cache-state', {
-    method: 'POST',
-    body: JSON.stringify({ resourceId, state }),
-  })
-}
-
-export async function stopMonitoring(subscriptionId, resourceGroupId, resourceId = null) {
-  return apiRequest('/monitor/stop', {
-    method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
-  })
-}
-
-// ============================
-// Seed dummy golden baseline
-// ============================
-
-export async function seedBaseline(subscriptionId, resourceGroupId, resourceId) {
-  return apiRequest('/seed-baseline', {
-    method: 'POST',
-    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
-  })
-}
-
-// ============================
-// Policy Compliance
-// ============================
-
-export async function fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId = null) {
-  const params = new URLSearchParams({ subscriptionId, resourceGroupId })
-  if (resourceId) params.set('resourceId', resourceId)
-  return apiRequest(`/policy/compliance?${params}`)
-}
-
-// ============================
-// AI Features
-// ============================
-
-export async function fetchAiExplanation(record) {
-  return apiRequest('/ai/explain', { method: 'POST', body: JSON.stringify(record) })
-}
-
-export async function fetchAiSeverity(record) {
-  return apiRequest('/ai/severity', { method: 'POST', body: JSON.stringify(record) })
-}
-
-export async function fetchAiRecommendation(record) {
-  return apiRequest('/ai/recommend', { method: 'POST', body: JSON.stringify(record) })
-}
-
-export async function fetchAnomalies(subscriptionId) {
-  return apiRequest(`/ai/anomalies?subscriptionId=${subscriptionId}`)
-}
-
-// ============================
-// Configuration Genome
-// ============================
-
-export async function fetchGenomeSnapshots(subscriptionId, resourceId, limit = 50) {
-  const params = new URLSearchParams({ subscriptionId, limit })
-  if (resourceId) params.set('resourceId', resourceId)
-  return apiRequest(`/genome?${params}`)
-}
-
-export async function saveGenomeSnapshot(subscriptionId, resourceGroupId, resourceId, label = '') {
-  return apiRequest('/genome/save', { method: 'POST', body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, label }) })
-}
-
-export async function promoteGenomeSnapshot(subscriptionId, resourceGroupId, resourceId, blobKey) {
-  return apiRequest('/genome/promote', { method: 'POST', body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, blobKey }) })
-}
-
-export async function rollbackToSnapshot(subscriptionId, resourceGroupId, resourceId, blobKey) {
-  return apiRequest('/genome/rollback', { method: 'POST', body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, blobKey }) })
 }
