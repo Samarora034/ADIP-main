@@ -311,7 +311,4 @@ export default {
   fetchResourceGroups,
   fetchResources,
   fetchResourceConfiguration,
-  startDriftScan,
-  stopDriftScan,
-  getScanStatus,
 }

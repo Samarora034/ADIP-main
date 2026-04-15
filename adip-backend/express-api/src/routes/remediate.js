@@ -58,7 +58,7 @@ router_remediate.post('/remediate', async (req, res) => {
  
     const logicAppUrl = process.env.ALERT_LOGIC_APP_URL
     const { classifySeverity } = require('../shared/severity')
-    const remSeverity = classifySeverity(differences.map(d => ({ type: d.kind === 'D' ? 'removed' : d.kind === 'N' ? 'added' : 'modified', path: d.path?.join('.') || '' })))
+    const remSeverity = classifySeverity(differences)
     if (logicAppUrl && ['critical', 'high'].includes(remSeverity)) fetch(logicAppUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resourceId, resourceGroup: resourceGroupId, subscriptionId, severity: remSeverity, changeCount: differences.length, detectedAt: new Date().toISOString() }) }).catch(() => {})
  
     const credential = new DefaultAzureCredential()
