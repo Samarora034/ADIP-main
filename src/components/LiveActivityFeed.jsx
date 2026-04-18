@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react'
+import './LiveActivityFeed.css'
 
 function resolveUser(ev) {
   if (ev.caller && ev.caller !== 'unknown' && ev.caller !== 'Unknown user' && ev.caller !== 'System') return ev.caller
@@ -61,7 +62,7 @@ export default function LiveActivityFeed({ liveEvents, driftEvents, isScanning, 
       <div className="panel-body panel-body-log" ref={logRef}>
         {/* Header controls */}
         <div className="feed-controls" style={{ marginBottom: 12, justifyContent: 'flex-end' }}>
-          <span className="panel-badge">{liveEvents.length + driftEvents.length} events</span>
+          <span className="panel-badge">{driftEvents.length} events</span>
           {uniqueUsers.length > 0 && (
             <select value={userFilter} onChange={e=>setUserFilter(e.target.value)} className="feed-user-filter">
               <option value=''>All users</option>
@@ -86,7 +87,6 @@ export default function LiveActivityFeed({ liveEvents, driftEvents, isScanning, 
         {liveEvents.map(ev => (
           <div key={ev.id} className={`log-entry log-entry-${ev.type}`}>
             <span className="log-time">{ev.timestamp}</span>
-            <span className="log-icon">{getEventIcon(ev.icon)}</span>
             <span className="log-message">{ev.message}</span>
           </div>
         ))}
