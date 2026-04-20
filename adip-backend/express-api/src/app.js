@@ -132,4 +132,49 @@ const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
   console.log(`ADIP API running on port ${PORT}`)
   startQueuePoller()
+  startAfterHoursAlertCheck()
 })
+
+// ── After-hours critical drift alert ─────────────────────────────────────────
+// Fires once per day after 19:00 if any critical drift records exist from today
+function startAfterHoursAlertCheck() {
+  let lastFiredDate = null   // tracks the calendar date (YYYY-MM-DD) we last fired
+
+  setInterval(async () => {
+    const now   = new Date()
+    const today = now.toISOString().slice(0, 10)
+    if (now.getHours() < 19) return              // before 7pm — skip
+    if (lastFiredDate === today) return           // already fired today — skip
+
+    const logicAppUrl = process.env.ALERT_LOGIC_APP_URL
+    if (!logicAppUrl) return
+
+    try {
+      const { getDriftRecords } = require('./services/blobService')
+      const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID
+      if (!subscriptionId) return
+
+      const since         = new Date(today + 'T00:00:00.000Z').toISOString()
+      const critical      = await getDriftRecords({ subscriptionId, severity: 'critical', limit: 50 })
+      const todayCritical = critical.filter(r => r.detectedAt >= since)
+
+      if (todayCritical.length === 0) { lastFiredDate = today; return }
+
+      console.log(`[after-hours-alert] ${todayCritical.length} critical drift(s) found after 19:00 — sending alerts`)
+
+      for (const record of todayCritical) {
+        await fetch(logicAppUrl, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ ...record, afterHoursAlert: true }),
+        }).catch(e => console.error('[after-hours-alert] fetch failed:', e.message))
+      }
+
+      lastFiredDate = today
+      console.log(`[after-hours-alert] done — fired for date ${today}`)
+    } catch (e) {
+      console.error('[after-hours-alert] error:', e.message)
+    }
+  }, 60 * 1000)  // check every minute
+}
+// ── After-hours critical drift alert END ─────────────────────────────────────

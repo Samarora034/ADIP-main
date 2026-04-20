@@ -188,7 +188,7 @@ async function listGenomeSnapshots(subscriptionId, resourceId, limit = 50) {
   for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
     if (results.length >= limit) break
     const doc = await readBlob('baseline-genome', entity.blobKey)
-    if (doc) results.push({ ...doc, _blobKey: entity.blobKey })
+    if (doc) results.push({ ...doc, _blobKey: entity.blobKey, rolledBackAt: entity.rolledBackAt || null })
   }
   return results.sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
 }
