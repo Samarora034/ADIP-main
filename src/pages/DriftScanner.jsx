@@ -16,7 +16,7 @@ import { useNavigate } from 'react-router-dom'
 import JsonTree from '../components/JsonTree'
 import { useAzureScope } from '../hooks/useAzureScope'
 import { useDriftSocket } from '../hooks/useDriftSocket'
-import { fetchResourceConfiguration, stopMonitoring, fetchPolicyCompliance, cacheState, fetchAnomalies } from '../services/api'
+import {fetchResourceConfiguration, stopMonitoring, cacheState } from '../services/api'
 import './DriftScanner.css'
 import { useDashboard } from '../context/DashboardContext'
 import LiveActivityFeed from '../components/LiveActivityFeed'
@@ -159,14 +159,14 @@ export default function DriftScanner() {
               setIsSubmitted(true)
               setConfigData(fetchedConfig)
 
-              // Fetch Azure Policy compliance state for the selected scope
-              fetchPolicyCompliance(subscription, resourceGroup, resource || null)
-                .then(policyResult => setPolicyData(policyResult)).catch(() => {})
+              // // Fetch Azure Policy compliance state for the selected scope
+              // fetchPolicyCompliance(subscription, resourceGroup, resource || null)
+              //   .then(policyResult => setPolicyData(policyResult)).catch(() => {})
 
               if (!isDemoMode) {
                 // Fetch AI anomaly detection across last 50 drift records
-                fetchAnomalies(subscription)
-                  .then(anomalyResult => setAnomalies(anomalyResult?.anomalies || [])).catch(() => {})
+                // fetchAnomalies(subscription)
+                //   .then(anomalyResult => setAnomalies(anomalyResult?.anomalies || [])).catch(() => {})
 
                 // Seed the diff cache so the first Socket.IO event has a previous state to diff against
                 const resourcesToCacheForDiff = fetchedConfig.resources
@@ -200,7 +200,7 @@ export default function DriftScanner() {
           })
           .finally(() => setIsScanning(false))
       }
-    }, 10)
+    }, 1)
   }
 
   // handleStop — called when the user clicks the Stop button

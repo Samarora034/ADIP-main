@@ -22,7 +22,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDashboard } from '../context/DashboardContext'
 import NavBar from '../components/NavBar'
-import { fetchSubscriptions, fetchResourceGroups, fetchResources, fetchDriftEvents, fetchStatsToday, fetchResourceConfiguration, fetchRecentChanges, fetchChartStats } from '../services/api'
+import { fetchSubscriptions, fetchResourceGroups, fetchResources, fetchStatsToday, fetchResourceConfiguration, fetchRecentChanges, fetchChartStats } from '../services/api'
 import './DashboardHome.css'
 
 // ── Filter dropdown component ─────────────────────────────────────────────────
@@ -90,7 +90,7 @@ function DonutChart({ changed, total }) {
       <div className="donut-chart">
         <svg viewBox="0 0 36 36" className="donut-svg">
           <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e2e8f0" strokeWidth="3" />
-          <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#f59e0b" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${dash}, 100`} />
+          <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#f59e0b" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${dash}, 1000`} />
         </svg>
         <div className="donut-center">
           <span className="donut-number">{changed}</span>
@@ -297,7 +297,7 @@ export default function DashboardHome() {
         caller:        callerFilter,
         changeType:    changeTypeFilter,
         hours:         hoursToFetch,
-        limit:         100,
+        limit:         1000,
       }).catch(() => [])
       setRecentChangeEvents(Array.isArray(changeEvents) ? changeEvents : [])
 
@@ -454,7 +454,7 @@ export default function DashboardHome() {
                 </thead>
                 <tbody>
                   {/* Render up to 100 rows — each row is one ARM change event */}
-                  {filteredChangeEvents.slice(0, 100).map((changeEvent, rowIndex) => {
+                  {filteredChangeEvents.slice(0, 1000).map((changeEvent, rowIndex) => {
                     // Extract the short resource name from the full ARM resource ID
                     const resourceShortName = changeEvent.resourceId?.split('/').pop() || '—'
                     // Shorten the operation name to the last two segments (e.g. storageAccounts/write)
