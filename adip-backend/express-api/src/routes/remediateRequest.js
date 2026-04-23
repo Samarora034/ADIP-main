@@ -16,7 +16,7 @@ router_remediateRequest.post('/remediate-request', async (req, res) => {
   try {
     // POST to Logic App → sendAlert Function → ACS email with Approve/Reject links
     const alertLogicAppUrl = process.env.ALERT_LOGIC_APP_URL
-    if (alertLogicAppUrl && ['critical', 'high', 'medium'].includes(severity)) {
+    if (alertLogicAppUrl && ['critical', 'high'].includes(severity)) {
       await fetch(alertLogicAppUrl, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
