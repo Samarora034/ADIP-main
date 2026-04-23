@@ -308,7 +308,7 @@ async function saveChangeRecord(record) {
 // on every dashboard auto-refresh cycle.
 const _recentChangesCache = new Map()  // key: cacheKey string → { data, expiresAt }
 
-async function getRecentChanges({ subscriptionId, resourceGroup, caller, changeType, since, limit = 200 }) {
+async function getRecentChanges({ subscriptionId, resourceGroup, caller, changeType, since, limit = 10000 }) {
   const tc = tableClient('changesIndex')
   if (!tc) return []
 
