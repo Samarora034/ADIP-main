@@ -1,3 +1,4 @@
+'use strict'
 // FILE: routes/remediate.js
 
 const router_remediate = require('express').Router()
@@ -9,37 +10,14 @@ const { sendDriftAlertEmail } = require('../services/alertService')
 const { reconcileStorageChildren } = require('../services/storageChildService')
 const { getResourceConfig, getApiVersion } = require('../services/azureResourceService')
 const { diffObjects } = require('../shared/diff')
+const { classifySeverity } = require('../shared/severity')
+const { stripVolatileFields } = require('../shared/armUtils')
  
-const VOLATILE_REM = ['etag', 'changedTime', 'createdTime', 'provisioningState', 'lastModifiedAt', 'systemData', '_ts', '_etag', '_rid', '_self', 'id']
-// Additional read-only fields ARM rejects on PUT
-const READONLY_PROPERTIES_REM = [
-  'instanceView', 'powerState', 'statuses', 'resources', 'latestModelApplied', 'vmId', 'timeCreated',
-  // NSG read-only fields
-  'defaultSecurityRules', 'resourceGuid', 'networkInterfaces', 'subnets',
-]
+// Volatile and read-only field stripping imported from shared/armUtils.js (DRY)
 // Additional read-only fields ARM rejects on PUT (VM instanceView, power state, etc.)
  
  
-// ── strip (remediate) START ──────────────────────────────────────────────────
-// Strips volatile fields before applying an ARM PUT to prevent write conflicts
-function strip(obj) {
-  console.log('[remediate.strip] starts')
-  if (Array.isArray(obj)) {
-    const r = obj.map(strip)
-    console.log('[remediate.strip] ends — array')
-    return r
-  }
-  if (obj && typeof obj === 'object') {
-    const r = Object.fromEntries(
-      Object.entries(obj).filter(([k]) => !VOLATILE_REM.includes(k) && !READONLY_PROPERTIES_REM.includes(k)).map(([k, v]) => [k, strip(v)])
-    )
-    console.log('[remediate.strip] ends — object')
-    return r
-  }
-  console.log('[remediate.strip] ends — primitive')
-  return obj
-}
-// ── strip (remediate) END ────────────────────────────────────────────────────
+// strip() is now stripVolatileFields() from shared/armUtils.js
  
  
 // ── POST /api/remediate START ────────────────────────────────────────────────
@@ -64,7 +42,6 @@ router_remediate.post('/remediate', async (req, res) => {
     const liveState     = strip(liveRaw)
     const differences   = diffObjects(liveState, baselineState)
  
-    const { classifySeverity } = require('../shared/severity')
     const remSeverity = classifySeverity(differences)
     // Send alert email if severity is critical or high (sendDriftAlertEmail handles the severity check)
     sendDriftAlertEmail({ resourceId, resourceGroup: resourceGroupId, subscriptionId, severity: remSeverity, changeCount: differences.length, detectedAt: new Date().toISOString() }).catch(() => {})
@@ -140,9 +117,9 @@ router_remediate.post('/remediate', async (req, res) => {
     res.json({ remediated: true, resourceId, changeCount: differences.length,
       appliedBaseline: baselineState, previousLiveState: liveState })
     console.log('[POST /remediate] ends — applied baseline, changes:', differences.length)
-  } catch (err) {
-    console.log('[POST /remediate] ends — error:', err.message)
-    res.status(500).json({ error: err.message })
+  } catch (remediateError) {
+    console.log('[POST /remediate] ends — error:', remediateError.message)
+    res.status(500).json({ error: remediateError.message })
   }
 })
 // ── POST /api/remediate END ──────────────────────────────────────────────────

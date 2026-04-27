@@ -7,9 +7,7 @@ const { getBaseline, saveDriftRecord } = require('../services/blobService')
 const { broadcastDriftEvent } = require('../services/socketService')
 const { explainDrift, reclassifySeverity } = require('../services/aiService')
 
-const { getMonitorSessionsTableClient } = require('../services/blobService')
-
-// getMonitorSessionsTableClient is imported from blobService — infrastructure stays in the service layer
+// getMonitorSessionsTableClient imported above from blobService — infrastructure stays in the service layer
 
 // Generates a stable Table Storage row key from the session scope
 function buildSessionRowKey(subscriptionId, resourceGroupId, resourceId) {
@@ -22,6 +20,7 @@ function buildSessionRowKey(subscriptionId, resourceGroupId, resourceId) {
 // Full drift check pipeline: fetches live + baseline, diffs, classifies, runs AI, saves record, alerts
 async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
   console.log('[runDriftCheck] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupId, 'resourceId:', resourceId)
+  if (!subscriptionId || !resourceGroupId) throw new Error('runDriftCheck requires subscriptionId and resourceGroupId')
   const [currentLiveConfig, storedBaseline] = await Promise.all([
     getResourceConfig(subscriptionId, resourceGroupId, resourceId || null),
     getBaseline(subscriptionId, resourceId || resourceGroupId),
@@ -70,7 +69,7 @@ router.post('/compare', async (req, res) => {
   const { subscriptionId, resourceGroupId, resourceId } = req.body
   if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
   try { res.json(await runDriftCheck(subscriptionId, resourceGroupId, resourceId || null)) }
-  catch (err) { res.status(500).json({ error: err.message }) }
+  catch (compareError) { res.status(500).json({ error: compareError.message }) }
 })
 router.post('/monitor/start', async (req, res) => {
   const { subscriptionId, resourceGroupId, resourceId, intervalMs = 60000 } = req.body
@@ -93,6 +92,7 @@ router.post('/monitor/start', async (req, res) => {
 
 router.post('/monitor/stop', async (req, res) => {
   const { subscriptionId, resourceGroupId, resourceId } = req.body
+  if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
   const sessionTableRowKey = buildSessionRowKey(subscriptionId, resourceGroupId, resourceId)
   try {
     await getMonitorSessionsTableClient().upsertEntity({

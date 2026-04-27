@@ -1,3 +1,4 @@
+'use strict'
 // FILE: routes/baselineUpload.js
 // ROLE: POST /api/baselines/upload — accepts a JSON file as the new golden baseline
 
@@ -17,6 +18,10 @@ router_baselineUpload.post('/baselines/upload', async (req, res) => {
   if (typeof baselineData !== 'object' || Array.isArray(baselineData)) {
     console.log('[POST /baselines/upload] ends — baselineData is not a JSON object')
     return res.status(400).json({ error: 'baselineData must be a JSON object' })
+  }
+  if (Object.keys(baselineData).length === 0) {
+    console.log('[POST /baselines/upload] ends — baselineData is empty')
+    return res.status(400).json({ error: 'baselineData must not be empty' })
   }
  
   try {

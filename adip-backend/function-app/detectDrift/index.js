@@ -1,3 +1,4 @@
+'use strict'
 // FILE: adip-backend/function-app/detectDrift/index.js
 // ROLE: Azure Function — detects drift between live ARM config and stored baseline
 
@@ -186,7 +187,7 @@ module.exports = async function (context, req) {
   } catch (err) {
     console.log('[detectDrift mainHandler] ends — caught error:', err.message)
     context.log.error('detectDrift error:', err.message)
-    context.res = { status: 500, body: { error: err.message } }
+    context.res = { status: 500, body: { error: detectDriftError.message } }
   }
 }
 // ── Main handler END ──────────────────────────────────────────────────────────

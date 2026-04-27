@@ -1,6 +1,6 @@
 'use strict'
 const router_drift = require('express').Router()
-const { getDriftHistory: getDriftRecordsForRoute, getTotalChangesCount, getRecentChanges, getDriftIndexTableClient, getChangesIndexTableClient } = require('../services/blobService')
+const { getDriftHistory: getDriftRecordsForRoute, getTotalChangesCount, getRecentChanges, getChangesIndexTableClient } = require('../services/blobService')
 
 // Table clients imported from blobService — infrastructure stays in the service layer
 
@@ -23,7 +23,6 @@ router_drift.get('/changes/recent', async (req, res) => {
   if (!subscriptionId) return res.status(400).json({ error: 'subscriptionId required' })
   try {
     const sinceTimestamp      = new Date(Date.now() - Number(hours) * 3600 * 1000).toISOString()
-    // Cap at 100 — dashboard only renders 100 rows, fetching more wastes Table Storage reads
     const recentChangeRecords = await getRecentChanges({ subscriptionId, resourceGroup, caller, changeType, since: sinceTimestamp, limit: Number(limit) || 10000 })
     res.json(recentChangeRecords)
   } catch (fetchError) { res.status(500).json({ error: fetchError.message }) }
@@ -88,6 +87,7 @@ router_drift.get('/stats/today', async (req, res) => {
 router_drift.get('/stats/chart', async (req, res) => {
   const { subscriptionId, mode = '24h' } = req.query
   if (!subscriptionId) return res.status(400).json({ error: 'subscriptionId required' })
+  if (!['24h', '7d', '30d'].includes(mode)) return res.status(400).json({ error: 'mode must be 24h, 7d, or 30d' })
 
   const now = Date.now()
   let since, buckets
