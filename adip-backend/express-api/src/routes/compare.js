@@ -7,12 +7,9 @@ const { getBaseline, saveDriftRecord } = require('../services/blobService')
 const { broadcastDriftEvent } = require('../services/socketService')
 const { explainDrift, reclassifySeverity } = require('../services/aiService')
 
-const { TableClient } = require('@azure/data-tables')
+const { getMonitorSessionsTableClient } = require('../services/blobService')
 
-// Returns a Table Storage client for monitorSessions — stores active monitoring sessions
-function getMonitorSessionsTable() {
-  return TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'monitorSessions')
-}
+// getMonitorSessionsTableClient is imported from blobService — infrastructure stays in the service layer
 
 // Generates a stable Table Storage row key from the session scope
 function buildSessionRowKey(subscriptionId, resourceGroupId, resourceId) {
@@ -80,7 +77,7 @@ router.post('/monitor/start', async (req, res) => {
   if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
   const sessionTableRowKey = buildSessionRowKey(subscriptionId, resourceGroupId, resourceId)
   try {
-    await getMonitorSessionsTable().upsertEntity({
+    await getMonitorSessionsTableClient().upsertEntity({
       partitionKey:    'session',
       rowKey:          sessionTableRowKey,
       subscriptionId,
@@ -98,7 +95,7 @@ router.post('/monitor/stop', async (req, res) => {
   const { subscriptionId, resourceGroupId, resourceId } = req.body
   const sessionTableRowKey = buildSessionRowKey(subscriptionId, resourceGroupId, resourceId)
   try {
-    await getMonitorSessionsTable().upsertEntity({
+    await getMonitorSessionsTableClient().upsertEntity({
       partitionKey: 'session', rowKey: sessionTableRowKey,
       subscriptionId, resourceGroupId, resourceId: resourceId || '',
       active: false,

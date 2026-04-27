@@ -52,6 +52,11 @@ module.exports = async function (context, req) {
         console.log('[recordChange mainHandler] skipping event — deployment resource URI:', eventPayload.resourceUri)
         continue
       }
+      // Skip ResourceActionSuccess — system-generated status events with no human operator
+      if ((event.eventType || '').includes('ResourceActionSuccess')) {
+        console.log('[recordChange mainHandler] skipping event — ResourceActionSuccess has no human operator')
+        continue
+      }
 
       // ── Resource ID normalisation START ──────────────────────────────────
       // Normalise resource ID: strip child resource paths (> 9 parts) to get the parent resource

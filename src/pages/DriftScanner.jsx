@@ -326,16 +326,12 @@ export default function DriftScanner() {
                 <div className="ds-stat-pill ds-stat-pill--info"><span className="ds-stat-val">{loadedResourceCount}</span> resources</div>
                 <div className="ds-stat-pill ds-stat-pill--ok"><span className="ds-stat-val">{loadedTagCount}</span> tags</div>
                 <div className="ds-stat-pill ds-stat-pill--region"><span className="ds-stat-val">{loadedRegion}</span></div>
-                {policyData?.nonCompliant > 0 && (
-                  <div className="ds-stat-pill" style={{ color: '#dc2626' }}>
-                    <span className="ds-stat-val" style={{ color: '#dc2626' }}>{policyData.nonCompliant}</span> policy violations
-                  </div>
-                )}
+                
               </div>
             )}
 
             {/* AI Anomalies */}
-            {anomalies?.length > 0 && (
+            {/* {anomalies?.length > 0 && (
               <div className="ds-anomalies">
                 <span className="ds-anomaly-label">AI Anomalies</span>
                 {anomalies.slice(0, 2).map((anomaly, anomalyIndex) => (
@@ -345,7 +341,7 @@ export default function DriftScanner() {
                   </div>
                 ))}
               </div>
-            )}
+            )} */}
           </section>
 
           {/* Progress */}

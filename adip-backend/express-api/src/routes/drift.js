@@ -1,15 +1,8 @@
 'use strict'
 const router_drift = require('express').Router()
-const { getDriftHistory: getDriftRecordsForRoute, getTotalChangesCount, getRecentChanges } = require('../services/blobService')
-const { TableClient } = require('@azure/data-tables')
+const { getDriftHistory: getDriftRecordsForRoute, getTotalChangesCount, getRecentChanges, getDriftIndexTableClient, getChangesIndexTableClient } = require('../services/blobService')
 
-function getDriftIndexTable() {
-  return TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'driftIndex')
-}
-
-function getChangesIndexTable() {
-  return TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'changesIndex')
-}
+// Table clients imported from blobService — infrastructure stays in the service layer
 
 // ── GET /api/drift-events ─────────────────────────────────────────────────────
 router_drift.get('/drift-events', async (req, res) => {
@@ -58,7 +51,7 @@ router_drift.get('/stats/today', async (req, res) => {
 
   try {
     // Query changesIndex (all ARM events today) for accurate counts
-    const tc = getChangesIndexTable()
+    const tc = getChangesIndexTableClient()
     const filter = `PartitionKey eq '${subscriptionId}' and detectedAt ge '${sinceISO}'`
 
     // Use Sets to count unique resources, RGs, and callers
@@ -121,7 +114,7 @@ router_drift.get('/stats/chart', async (req, res) => {
   }
 
   try {
-    const tc = getChangesIndexTable()
+    const tc = getChangesIndexTableClient()
     const filter = `PartitionKey eq '${subscriptionId}' and detectedAt ge '${since}'`
     for await (const changeEntity of tc.listEntities({ queryOptions: { filter, select: ['detectedAt'] } })) {
       const eventDate = new Date(changeEntity.detectedAt)
