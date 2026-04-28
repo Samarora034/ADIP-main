@@ -92,6 +92,7 @@ app.use('/api', require('./routes/remediationSchedule'))
 app.use('/api', require('./routes/driftImpact'))
 app.use('/api', require('./routes/userPreferences'))
 app.use('/api', require('./routes/chat'))
+app.use('/api', require('./routes/rgPrediction'))
 
 
 
