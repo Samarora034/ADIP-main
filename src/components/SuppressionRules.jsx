@@ -131,15 +131,15 @@ export default function SuppressionRules({ subscriptionId: propSubId }) {
         Fields matching these rules are ignored during drift comparison and will not trigger alerts.
       </p>
 
-      {error && <div style={{ color: '#ef4444', fontSize: 13, marginBottom: 12 }}>{error}</div>}
+      {error && <div role="alert" style={{ color: '#ef4444', fontSize: 13, marginBottom: 12 }}>{error}</div>}
 
       {/* Rules table */}
       {loading ? (
-        <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 16 }}>Loading rules...</div>
+        <div style={{ color: '#6b7280', fontSize: 13, marginBottom: 16 }}>Loading rules...</div>
       ) : (
-        <table className="an-table" style={{ marginBottom: 24 }}>
+        <table className="an-table" style={{ marginBottom: 24 }} aria-label="Suppression rules">
           <thead>
-            <tr><th>Field Path</th><th>Scope</th><th>Change Types</th><th>Reason</th><th style={{ width: 40 }}>Del</th></tr>
+            <tr><th scope="col">Field Path</th><th scope="col">Scope</th><th scope="col">Change Types</th><th scope="col">Reason</th><th scope="col" style={{ width: 40 }}>Del</th></tr>
           </thead>
           <tbody>
             {rules.length === 0 && (
@@ -152,7 +152,7 @@ export default function SuppressionRules({ subscriptionId: propSubId }) {
                 <td style={{ fontSize: 12 }}>{(rule.changeTypes?.length ? rule.changeTypes : ['all']).join(', ')}</td>
                 <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{rule.reason || '—'}</td>
                 <td>
-                  <button className="cp-toolbar-btn" onClick={() => handleDelete(rule.rowKey)}>
+                  <button className="cp-toolbar-btn" onClick={() => handleDelete(rule.rowKey)} aria-label={`Delete rule for ${rule.fieldPath}`}>
                     <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#ef4444' }}>delete</span>
                   </button>
                 </td>
