@@ -8,6 +8,7 @@ const { DefaultAzureCredential } = require('@azure/identity')
 const { getBaseline } = require('../services/blobService')
 const { sendDriftAlertEmail } = require('../services/alertService')
 const { reconcileStorageChildren } = require('../services/storageChildService')
+const { enforcePolicesForDrift }   = require('../services/policyEnforcementService')
 const { getResourceConfig, getApiVersion } = require('../services/azureResourceService')
 const { diffObjects } = require('../shared/diff')
 const { classifySeverity } = require('../shared/severity')
@@ -114,8 +115,13 @@ router_remediate.post('/remediate', async (req, res) => {
       }
     }
  
+    const policiesCreated = await enforcePolicesForDrift(subscriptionId, rgName, differences).catch(e => {
+      console.log('[POST /remediate] policy enforcement non-fatal error:', e.message)
+      return []
+    })
+
     res.json({ remediated: true, resourceId, changeCount: differences.length,
-      appliedBaseline: baselineState, previousLiveState: liveState })
+      policiesCreated, appliedBaseline: baselineState, previousLiveState: liveState })
     console.log('[POST /remediate] ends — applied baseline, changes:', differences.length)
   } catch (remediateError) {
     console.log('[POST /remediate] ends — error:', remediateError.message)
@@ -124,6 +130,29 @@ router_remediate.post('/remediate', async (req, res) => {
 })
 // ── POST /api/remediate END ──────────────────────────────────────────────────
  
+
+// GET /api/policy/assignments?subscriptionId=&resourceGroupId=
+router_remediate.get('/policy/assignments', async (req, res) => {
+  console.log('[GET /policy/assignments] starts')
+  const { subscriptionId, resourceGroupId } = req.query
+  if (!subscriptionId) return res.status(400).json({ error: 'subscriptionId required' })
+  try {
+    const { TableClient } = require('@azure/data-tables')
+    const tc = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'policyAssignments')
+    const items = []
+    let filter = `PartitionKey eq '${subscriptionId}'`
+    if (resourceGroupId) filter += ` and resourceGroupId eq '${resourceGroupId}'`
+    for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
+      items.push({ assignmentId: entity.assignmentId, displayName: entity.displayName, resourceGroupId: entity.resourceGroupId, createdAt: entity.createdAt })
+    }
+    res.json(items)
+    console.log('[GET /policy/assignments] ends — count:', items.length)
+  } catch (err) {
+    console.log('[GET /policy/assignments] error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router_remediate
  
  

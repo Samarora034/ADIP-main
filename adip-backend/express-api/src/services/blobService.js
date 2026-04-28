@@ -407,4 +407,5 @@ module.exports = {
   getMonitorSessionsTableClient,
   getDriftIndexTableClient,
   getChangesIndexTableClient,
+  readBlob,
 }

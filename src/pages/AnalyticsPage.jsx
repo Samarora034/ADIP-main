@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom'
 import NavBar from '../components/NavBar'
 import { useDashboard } from '../context/DashboardContext'
 import ReportsDashboard from '../components/ReportsDashboard'
+import DriftImpactDashboard from '../components/DriftImpactDashboard'
 import './AnalyticsPage.css'
 
 // ── Mock data generators ──────────────────────────────────────────────────────
@@ -402,115 +403,7 @@ export default function AnalyticsPage() {
         {/* ═══ TAB 2: Drift Impact Analysis ═════════════════════════════════ */}
         {activeTab === 'impact' && (
           <div className="an-tab-content" key="impact">
-            {/* Impact KPIs */}
-            <div className="an-kpi-grid">
-              {IMPACT_METRICS.map((m, i) => (
-                <div key={i} className="an-kpi-card">
-                  <div className="an-kpi-header">
-                    <span className="an-kpi-label">{m.label}</span>
-                    <span className="material-symbols-outlined an-kpi-icon">{m.icon}</span>
-                  </div>
-                  <div className="an-kpi-value-row">
-                    <span className="an-kpi-value">{m.value}</span>
-                    <span className={`an-kpi-trend an-kpi-trend--${m.trendDir}`}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-                        {m.trendDir === 'up' ? 'trending_up' : 'trending_down'}
-                      </span>
-                      {m.trend}
-                    </span>
-                  </div>
-                  <Sparkline data={Array.from({ length: 7 }, () => Math.floor(Math.random() * 30) + 5)}
-                    color={m.trendDir === 'up' ? '#10b981' : '#ef4444'} />
-                </div>
-              ))}
-            </div>
-
-            <div className="an-grid-2">
-              {/* Risk by resource group */}
-              <div className="an-card">
-                <div className="an-card-header">
-                  <div className="an-card-title-row">
-                    <span className="material-symbols-outlined an-card-icon">shield</span>
-                    <h2 className="an-card-title">Risk by Resource Group</h2>
-                  </div>
-                </div>
-                <div className="an-card-body">
-                  {RISK_GROUPS.map((rg, i) => (
-                    <div key={i} className="an-risk-row">
-                      <div className="an-risk-info">
-                        <span className="an-risk-name">{rg.name}</span>
-                        <span className="an-risk-meta">{rg.resources} resources · {rg.drifts} drifts</span>
-                      </div>
-                      <RiskBar score={rg.score} risk={rg.risk} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Change velocity */}
-              <div className="an-card">
-                <div className="an-card-header">
-                  <div className="an-card-title-row">
-                    <span className="material-symbols-outlined an-card-icon">speed</span>
-                    <h2 className="an-card-title">Change Velocity</h2>
-                  </div>
-                </div>
-                <div className="an-card-body">
-                  <div className="an-velocity-grid">
-                    <div className="an-velocity-item">
-                      <span className="an-velocity-value">8.3</span>
-                      <span className="an-velocity-label">Changes / Hour</span>
-                      <span className="an-velocity-sub">Peak: 23.1 at 14:00</span>
-                    </div>
-                    <div className="an-velocity-item">
-                      <span className="an-velocity-value">149</span>
-                      <span className="an-velocity-label">Changes Today</span>
-                      <span className="an-velocity-sub">vs 112 yesterday</span>
-                    </div>
-                    <div className="an-velocity-item">
-                      <span className="an-velocity-value">2.4x</span>
-                      <span className="an-velocity-label">Week-over-Week</span>
-                      <span className="an-velocity-sub">Acceleration rate</span>
-                    </div>
-                    <div className="an-velocity-item">
-                      <span className="an-velocity-value">18m</span>
-                      <span className="an-velocity-label">Avg. Fix Time</span>
-                      <span className="an-velocity-sub">Down from 32m</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Impact heatmap */}
-            <div className="an-card an-card--full">
-              <div className="an-card-header">
-                <div className="an-card-title-row">
-                  <span className="material-symbols-outlined an-card-icon">grid_on</span>
-                  <h2 className="an-card-title">Drift Frequency Heatmap</h2>
-                  <span className="an-card-badge">Last 7 days</span>
-                </div>
-              </div>
-              <div className="an-card-body">
-                <div className="an-heatmap">
-                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, di) => (
-                    <div key={day} className="an-heatmap-row">
-                      <span className="an-heatmap-day">{day}</span>
-                      {Array.from({ length: 24 }, (_, hi) => {
-                        const val = Math.floor(Math.random() * 10)
-                        const opacity = val === 0 ? 0.03 : Math.min(val / 10, 1)
-                        const bg = val > 7 ? '#ef4444' : val > 4 ? '#f59e0b' : '#1995ff'
-                        return <div key={hi} className="an-heatmap-cell" style={{ background: bg, opacity }} title={`${day} ${hi}:00 — ${val} drifts`} />
-                      })}
-                    </div>
-                  ))}
-                  <div className="an-heatmap-hours">
-                    <span />
-                    {[0, 3, 6, 9, 12, 15, 18, 21].map(h => <span key={h} className="an-heatmap-hour">{h}:00</span>)}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <DriftImpactDashboard subscriptionId={activeSubscriptionId} />
           </div>
         )}
 

@@ -7,6 +7,7 @@ const { getBaseline, saveDriftRecord } = require('../services/blobService')
 const { broadcastDriftEvent } = require('../services/socketService')
 const { explainDrift, reclassifySeverity } = require('../services/aiService')
 const { TableClient } = require('@azure/data-tables')
+const { mapDiffToControls } = require('../shared/complianceMap')
 
 // Loads active suppression rules for a subscription from Table Storage
 async function loadSuppressionRules(subscriptionId) {
@@ -14,21 +15,34 @@ async function loadSuppressionRules(subscriptionId) {
     const tc = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'suppressionRules')
     const rules = []
     for await (const entity of tc.listEntities({ queryOptions: { filter: `PartitionKey eq '${subscriptionId}'` } })) {
-      rules.push({ fieldPath: entity.fieldPath, resourceType: entity.resourceType || 'All' })
+      rules.push({
+        fieldPath:       entity.fieldPath,
+        resourceGroupId: entity.resourceGroupId || '',
+        resourceId:      entity.resourceId      || '',
+        changeTypes:     entity.changeTypes ? entity.changeTypes.split(',').filter(Boolean) : [],
+      })
     }
     return rules
   } catch {
-    return []  // non-fatal — if table missing, no suppression applied
+    return []
   }
 }
 
 // Returns true if a diff change should be suppressed based on active rules
-function isSuppressed(change, rules, resourceType) {
-  const changePath = (change.path || '').toLowerCase()
+function isSuppressed(change, rules, resourceId, resourceGroupId) {
+  const changePath  = (change.path || '').toLowerCase()
+  const changeType  = (change.type || 'modified').toLowerCase()
   return rules.some(rule => {
     const ruleField = rule.fieldPath.toLowerCase()
-    const typeMatch = rule.resourceType === 'All' || (resourceType || '').toLowerCase().includes(rule.resourceType.toLowerCase())
-    return typeMatch && (changePath === ruleField || changePath.startsWith(ruleField + '.') || changePath.startsWith(ruleField + ' '))
+    // Scope match: rule applies if no scope set, or scope matches
+    const rgMatch  = !rule.resourceGroupId || (resourceGroupId || '').toLowerCase().includes(rule.resourceGroupId.toLowerCase())
+    const resMatch = !rule.resourceId      || (resourceId      || '').toLowerCase() === rule.resourceId.toLowerCase()
+    if (!rgMatch || !resMatch) return false
+    // Change type match: suppress all types if none specified, else check list
+    const typeMatch = !rule.changeTypes.length || rule.changeTypes.includes(changeType) || rule.changeTypes.includes('all')
+    // Path match
+    const pathMatch = changePath === ruleField || changePath.startsWith(ruleField + '.') || changePath.startsWith(ruleField + ' ')
+    return pathMatch && typeMatch
   })
 }
 
@@ -54,7 +68,7 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId, caller
   const rawChanges       = storedBaseline?.resourceState ? diffObjects(storedBaseline.resourceState, currentLiveConfig) : []
   const suppressionRules = await loadSuppressionRules(subscriptionId)
   const resourceType     = currentLiveConfig?.type || ''
-  const detectedChanges  = rawChanges.filter(c => !isSuppressed(c, suppressionRules, resourceType))
+  const detectedChanges  = rawChanges.filter(c => !isSuppressed(c, suppressionRules, resourceId, resourceGroupId))
   const driftSeverity    = classifySeverity(detectedChanges)
   const driftRecord = {
     subscriptionId, resourceGroupId,
@@ -131,6 +145,18 @@ router.post('/monitor/stop', async (req, res) => {
     }, 'Merge')
     res.json({ monitoring: false, key: sessionTableRowKey })
   } catch (stopError) { res.status(500).json({ error: stopError.message }) }
+})
+
+
+// POST /api/compliance-impact
+// Body: { differences: [...] } — maps diff to violated compliance controls
+router.post('/compliance-impact', (req, res) => {
+  console.log('[POST /compliance-impact] starts')
+  const { differences } = req.body
+  if (!Array.isArray(differences)) return res.status(400).json({ error: 'differences array required' })
+  const controls = mapDiffToControls(differences)
+  res.json(controls)
+  console.log('[POST /compliance-impact] ends — controls:', controls.length)
 })
 
 module.exports = router

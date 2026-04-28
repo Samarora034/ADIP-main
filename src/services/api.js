@@ -319,10 +319,10 @@ export async function fetchSuppressionRules(subscriptionId) {
   return apiRequest(`/suppression-rules?subscriptionId=${encodeURIComponent(subscriptionId)}`)
 }
 
-export async function createSuppressionRule(subscriptionId, fieldPath, resourceType, reason) {
+export async function createSuppressionRule(subscriptionId, fieldPath, resourceGroupId, resourceId, changeTypes, reason) {
   return apiRequest('/suppression-rules', {
     method: 'POST',
-    body: JSON.stringify({ subscriptionId, fieldPath, resourceType, reason }),
+    body: JSON.stringify({ subscriptionId, fieldPath, resourceGroupId, resourceId, changeTypes, reason }),
   })
 }
 
@@ -345,4 +345,42 @@ export async function fetchRemediationSchedules(subscriptionId) {
 
 export async function cancelRemediationSchedule(subscriptionId, rowKey) {
   return apiRequest(`/remediation-schedule/${encodeURIComponent(rowKey)}?subscriptionId=${encodeURIComponent(subscriptionId)}`, { method: 'DELETE' })
+}
+
+// ── Drift Impact ─────────────────────────────────────────────────────────────
+
+export async function fetchDriftImpact(subscriptionId, days = 30) {
+  return apiRequest(`/drift-impact?subscriptionId=${encodeURIComponent(subscriptionId)}&days=${days}`)
+}
+
+export async function fetchResourceDriftEvents(subscriptionId, resourceId, limit = 10) {
+  return apiRequest(`/drift-impact/resource?subscriptionId=${encodeURIComponent(subscriptionId)}&resourceId=${encodeURIComponent(resourceId)}&limit=${limit}`)
+}
+
+// ── Compliance Impact ────────────────────────────────────────────────────────
+
+export async function fetchComplianceImpact(differences) {
+  return apiRequest('/compliance-impact', {
+    method: 'POST',
+    body: JSON.stringify({ differences }),
+  })
+}
+
+// ── User Preferences ─────────────────────────────────────────────────────────
+
+export async function fetchUserPreferences(username) {
+  return apiRequest(`/user-preferences?username=${encodeURIComponent(username)}`)
+}
+
+export async function saveUserPreferences(username, preferences) {
+  return apiRequest('/user-preferences', {
+    method: 'POST',
+    body: JSON.stringify({ username, preferences }),
+  })
+}
+
+// ── Policy Assignments ───────────────────────────────────────────────────────
+
+export async function fetchPolicyAssignments(subscriptionId, resourceGroupId) {
+  return apiRequest(`/policy/assignments?subscriptionId=${encodeURIComponent(subscriptionId)}&resourceGroupId=${encodeURIComponent(resourceGroupId)}`)
 }

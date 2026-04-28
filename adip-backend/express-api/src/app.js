@@ -19,7 +19,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../../.e
 async function ensureTables() {
   const { TableServiceClient } = require('@azure/data-tables')
   const svc = TableServiceClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING)
-  const required = ['changesIndex','driftIndex','genomeIndex','monitorSessions','suppressionRules','remediationSchedules']
+  const required = ['changesIndex','driftIndex','genomeIndex','monitorSessions','suppressionRules','remediationSchedules','policyAssignments']
   for (const name of required) {
     await svc.createTable(name).catch(() => {})  // no-op if already exists
   }
@@ -89,6 +89,8 @@ app.use('/api', require('./routes/attribution'))
 app.use('/api', require('./routes/dependencyGraph'))
 app.use('/api', require('./routes/suppressionRules'))
 app.use('/api', require('./routes/remediationSchedule'))
+app.use('/api', require('./routes/driftImpact'))
+app.use('/api', require('./routes/userPreferences'))
 app.use('/api', require('./routes/chat'))
 
 

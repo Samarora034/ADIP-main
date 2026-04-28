@@ -28,11 +28,13 @@ router.get('/suppression-rules', async (req, res) => {
     const filter = `PartitionKey eq '${subscriptionId}'`
     for await (const entity of tableClient().listEntities({ queryOptions: { filter } })) {
       rules.push({
-        rowKey:       entity.rowKey,
-        fieldPath:    entity.fieldPath,
-        resourceType: entity.resourceType || 'All',
-        reason:       entity.reason || '',
-        createdAt:    entity.createdAt,
+        rowKey:          entity.rowKey,
+        fieldPath:       entity.fieldPath,
+        resourceGroupId: entity.resourceGroupId || '',
+        resourceId:      entity.resourceId      || '',
+        changeTypes:     entity.changeTypes ? entity.changeTypes.split(',').filter(Boolean) : [],
+        reason:          entity.reason || '',
+        createdAt:       entity.createdAt,
       })
     }
     res.json(rules)
@@ -44,10 +46,10 @@ router.get('/suppression-rules', async (req, res) => {
 })
 
 // POST /api/suppression-rules
-// Body: { subscriptionId, fieldPath, resourceType?, reason? }
+// Body: { subscriptionId, fieldPath, resourceGroupId?, resourceId?, changeTypes?, reason? }
 router.post('/suppression-rules', async (req, res) => {
   console.log('[POST /suppression-rules] starts')
-  const { subscriptionId, fieldPath, resourceType = 'All', reason = '' } = req.body
+  const { subscriptionId, fieldPath, resourceGroupId = '', resourceId = '', changeTypes = [], reason = '' } = req.body
 
   if (!subscriptionId || !fieldPath) {
     return res.status(400).json({ error: 'subscriptionId and fieldPath required' })
@@ -59,15 +61,17 @@ router.post('/suppression-rules', async (req, res) => {
   try {
     const rowKey = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     await tableClient().upsertEntity({
-      partitionKey: subscriptionId,
+      partitionKey:    subscriptionId,
       rowKey,
       fieldPath,
-      resourceType,
+      resourceGroupId,
+      resourceId,
+      changeTypes:     Array.isArray(changeTypes) ? changeTypes.join(',') : changeTypes,
       reason,
-      createdAt: new Date().toISOString(),
+      createdAt:       new Date().toISOString(),
     }, 'Replace')
 
-    res.status(201).json({ rowKey, fieldPath, resourceType, reason })
+    res.status(201).json({ rowKey, fieldPath, resourceGroupId, resourceId, changeTypes, reason })
     console.log('[POST /suppression-rules] ends — rowKey:', rowKey)
   } catch (err) {
     console.log('[POST /suppression-rules] error:', err.message)
