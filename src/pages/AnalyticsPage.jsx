@@ -41,7 +41,6 @@ function generateTrendData(days) {
 const TABS = [
   { key: 'impact',     label: 'Drift Analysis & Trends',    icon: 'trending_up' },
   { key: 'prediction', label: 'Prediction & Forecasting',   icon: 'auto_graph' },
-  { key: 'attribution',label: 'Change Attribution',         icon: 'manage_accounts' },
   { key: 'cost',       label: 'Cost Impact',                icon: 'savings' },
   { key: 'reports',    label: 'Reports',                    icon: 'summarize' },
 ]
@@ -90,7 +89,6 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        {/* ═══ TAB 1: Drift Impact Analysis ═══════════════════════════════ */}
         {/* ═══ TAB 2: Drift Impact Analysis ═════════════════════════════════ */}
         {activeTab === 'impact' && (
           <div className="an-tab-content" key="impact">
@@ -111,12 +109,6 @@ export default function AnalyticsPage() {
           </div>
         )}
 
-        {/* ═══ TAB: Change Attribution ══════════════════════════════════════ */}
-        {activeTab === 'attribution' && (
-          <div className="an-tab-content" key="attribution">
-            <ChangeAttribution subscriptionId={activeSubscriptionId} />
-          </div>
-        )}
 
         {/* ═══ TAB 4: Reports ═══════════════════════════════════════════ */}
         {activeTab === 'cost' && (
