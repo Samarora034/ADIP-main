@@ -18,7 +18,7 @@ import { diff as deepDiff } from 'deep-diff'
 import JsonTree from '../components/JsonTree'
 import NavBar from '../components/NavBar'
 import ScheduleRemediationModal from '../components/ScheduleRemediationModal'
-import { fetchBaseline, remediateToBaseline, fetchAiExplanation, fetchAiRecommendation, uploadBaseline, requestRemediation, fetchResourceConfiguration, fetchComplianceImpact } from '../services/api'
+import { fetchBaseline, remediateToBaseline, fetchAiExplanation, fetchAiRecommendation, uploadBaseline, requestRemediation, fetchResourceConfiguration, fetchComplianceImpact, fetchSuppressionRules } from '../services/api'
 import { useDashboard } from '../context/DashboardContext'
 import { getControlsForPath } from '../utils/complianceMap'
 import { fetchCostEstimate } from '../services/api'
@@ -175,6 +175,13 @@ export default function ComparisonPage() {
   const [isPolicyCreated,   setIsPolicyCreated]   = useState(false)
   const [policiesCreated,   setPoliciesCreated]   = useState([])
   const [complianceControls, setComplianceControls] = useState([])
+  const [suppressionRules,   setSuppressionRules]   = useState([])
+
+  // Load suppression rules once on mount
+  useEffect(() => {
+    if (!subscriptionId) return
+    fetchSuppressionRules(subscriptionId).then(setSuppressionRules).catch(() => {})
+  }, [subscriptionId])
 
   // Refs to the JsonTree components so we can call expandAll/collapseAll imperatively
   const baselineTreeRef = useRef(null)
@@ -199,8 +206,22 @@ export default function ComparisonPage() {
   // Re-run diff silently whenever live config refreshes — no loading screen
   useEffect(() => {
     if (!baselineConfig || !currentLive) return
+    // Client-side suppression — mirrors server-side isSuppressed in compare.js
+    const norm = p => (p || '').toLowerCase().replace(/ \u2192 /g, '.')
+    const isSuppressed = diff => suppressionRules.some(rule => {
+      const ruleField  = norm(rule.fieldPath)
+      const changePath = norm(diff.path)
+      const changeType = (diff.type || 'modified').toLowerCase()
+      const rgMatch    = !rule.resourceGroupId || (resourceGroupId || '').toLowerCase().includes(rule.resourceGroupId.toLowerCase())
+      const resMatch   = !rule.resourceId      || (resourceId      || '').toLowerCase() === rule.resourceId.toLowerCase()
+      if (!rgMatch || !resMatch) return false
+      const typeMatch  = !rule.changeTypes?.length || rule.changeTypes.includes(changeType) || rule.changeTypes.includes('all')
+      const pathMatch  = changePath === ruleField || changePath.startsWith(ruleField + '.')
+      return pathMatch && typeMatch
+    })
+
     const rawDiffResult      = deepDiff(baselineConfig, normaliseState(currentLive)) || []
-    const formattedDiffItems = formatDifferences(rawDiffResult)
+    const formattedDiffItems = formatDifferences(rawDiffResult).filter(d => !isSuppressed(d))
     setFieldDifferences(formattedDiffItems)
     setDriftSeverity(classifySeverity(formattedDiffItems))
 
@@ -219,7 +240,7 @@ export default function ComparisonPage() {
         .catch(() => {})
         .finally(() => setIsAiLoading(false))
     }
-  }, [baselineConfig, currentLive])
+  }, [baselineConfig, currentLive, suppressionRules])
 
   // handleRemediate — called when the user clicks 'Apply Fix Now' or 'Request Approval'
   // Low severity: immediately calls ARM PUT via /api/remediate to revert to baseline

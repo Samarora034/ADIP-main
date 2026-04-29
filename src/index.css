@@ -171,22 +171,6 @@ input:focus-visible,
 }
 
 /* ── Skip to content link (accessibility) ──────── */
-.skip-to-content {
-  position: absolute;
-  top: -40px;
-  left: 0;
-  background: var(--accent);
-  color: #fff;
-  padding: 8px 16px;
-  z-index: 10000;
-  font-size: 14px;
-  font-weight: 600;
-  border-radius: 0 0 var(--radius-sm) 0;
-  transition: top var(--transition-fast);
-}
-.skip-to-content:focus {
-  top: 0;
-}
 
 /* ── Reduced Motion Preference ─────────────────── */
 @media (prefers-reduced-motion: reduce) {

@@ -77,7 +77,6 @@ const NavBar = ({ user, subscription, resourceGroup, resource, configData }) => 
   return (
     <nav className="dh-nav" role="navigation" aria-label="Main navigation">
       {/* Skip to content link for keyboard users */}
-      <a href="#main-content" className="skip-to-content">Skip to main content</a>
 
       <div className="dh-nav-left">
         <img src="../src/assets/ct-logo.png" alt="CloudThat Logo" className="ct-logo"/>
