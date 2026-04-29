@@ -1,24 +1,24 @@
 {
   "languages": {
-    "ruby": {
-      "name": "solargraph",
-      "command": "solargraph",
-      "args": [
-        "stdio"
-      ],
+    "go": {
+      "name": "gopls",
+      "command": "gopls",
+      "args": [],
       "file_extensions": [
-        "rb"
+        "go"
       ],
       "project_patterns": [
-        "Gemfile",
-        "Rakefile"
+        "go.mod",
+        "go.sum"
       ],
       "exclude_patterns": [
-        "**/vendor/**",
-        "**/tmp/**"
+        "**/vendor/**"
       ],
       "multi_workspace": false,
-      "initialization_options": {},
+      "initialization_options": {
+        "usePlaceholders": true,
+        "completeUnimported": true
+      },
       "request_timeout_secs": 60
     },
     "typescript": {
@@ -49,88 +49,22 @@
       },
       "request_timeout_secs": 60
     },
-    "cpp": {
-      "name": "clangd",
-      "command": "clangd",
+    "ruby": {
+      "name": "solargraph",
+      "command": "solargraph",
       "args": [
-        "--background-index"
+        "stdio"
       ],
       "file_extensions": [
-        "cpp",
-        "cc",
-        "cxx",
-        "c",
-        "h",
-        "hpp",
-        "hxx"
+        "rb"
       ],
       "project_patterns": [
-        "CMakeLists.txt",
-        "compile_commands.json",
-        "Makefile"
+        "Gemfile",
+        "Rakefile"
       ],
       "exclude_patterns": [
-        "**/build/**",
-        "**/cmake-build-**/**"
-      ],
-      "multi_workspace": false,
-      "initialization_options": {},
-      "request_timeout_secs": 60
-    },
-    "rust": {
-      "name": "rust-analyzer",
-      "command": "rust-analyzer",
-      "args": [],
-      "file_extensions": [
-        "rs"
-      ],
-      "project_patterns": [
-        "Cargo.toml"
-      ],
-      "exclude_patterns": [
-        "**/target/**"
-      ],
-      "multi_workspace": false,
-      "initialization_options": {
-        "cargo": {
-          "buildScripts": {
-            "enable": true
-          }
-        },
-        "diagnostics": {
-          "enable": true,
-          "enableExperimental": true
-        },
-        "workspace": {
-          "symbol": {
-            "search": {
-              "scope": "workspace"
-            }
-          }
-        }
-      },
-      "request_timeout_secs": 60
-    },
-    "python": {
-      "name": "pyright",
-      "command": "pyright-langserver",
-      "args": [
-        "--stdio"
-      ],
-      "file_extensions": [
-        "py"
-      ],
-      "project_patterns": [
-        "pyproject.toml",
-        "setup.py",
-        "requirements.txt",
-        "pyrightconfig.json"
-      ],
-      "exclude_patterns": [
-        "**/__pycache__/**",
-        "**/venv/**",
-        "**/.venv/**",
-        "**/.pytest_cache/**"
+        "**/vendor/**",
+        "**/tmp/**"
       ],
       "multi_workspace": false,
       "initialization_options": {},
@@ -173,24 +107,90 @@
       },
       "request_timeout_secs": 60
     },
-    "go": {
-      "name": "gopls",
-      "command": "gopls",
-      "args": [],
+    "cpp": {
+      "name": "clangd",
+      "command": "clangd",
+      "args": [
+        "--background-index"
+      ],
       "file_extensions": [
-        "go"
+        "cpp",
+        "cc",
+        "cxx",
+        "c",
+        "h",
+        "hpp",
+        "hxx"
       ],
       "project_patterns": [
-        "go.mod",
-        "go.sum"
+        "CMakeLists.txt",
+        "compile_commands.json",
+        "Makefile"
       ],
       "exclude_patterns": [
-        "**/vendor/**"
+        "**/build/**",
+        "**/cmake-build-**/**"
+      ],
+      "multi_workspace": false,
+      "initialization_options": {},
+      "request_timeout_secs": 60
+    },
+    "python": {
+      "name": "pyright",
+      "command": "pyright-langserver",
+      "args": [
+        "--stdio"
+      ],
+      "file_extensions": [
+        "py"
+      ],
+      "project_patterns": [
+        "pyproject.toml",
+        "setup.py",
+        "requirements.txt",
+        "pyrightconfig.json"
+      ],
+      "exclude_patterns": [
+        "**/__pycache__/**",
+        "**/venv/**",
+        "**/.venv/**",
+        "**/.pytest_cache/**"
+      ],
+      "multi_workspace": false,
+      "initialization_options": {},
+      "request_timeout_secs": 60
+    },
+    "rust": {
+      "name": "rust-analyzer",
+      "command": "rust-analyzer",
+      "args": [],
+      "file_extensions": [
+        "rs"
+      ],
+      "project_patterns": [
+        "Cargo.toml"
+      ],
+      "exclude_patterns": [
+        "**/target/**"
       ],
       "multi_workspace": false,
       "initialization_options": {
-        "usePlaceholders": true,
-        "completeUnimported": true
+        "cargo": {
+          "buildScripts": {
+            "enable": true
+          }
+        },
+        "diagnostics": {
+          "enable": true,
+          "enableExperimental": true
+        },
+        "workspace": {
+          "symbol": {
+            "search": {
+              "scope": "workspace"
+            }
+          }
+        }
       },
       "request_timeout_secs": 60
     }

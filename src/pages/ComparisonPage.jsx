@@ -180,10 +180,10 @@ export default function ComparisonPage() {
   const baselineTreeRef = useRef(null)
   const liveTreeRef = useRef(null)
 
-  // On mount: fetch the golden baseline and policy compliance in parallel
-  // Then compute the diff between baseline and the live config passed via navigation state
+  // On mount: call POST /api/compare (server-side diff with suppression rules applied)
+  // Suppression rules stored in Azure Table Storage are applied before returning diffs
   useEffect(() => {
-    if (!subscriptionId) return
+    if (!subscriptionId || !resourceGroupId) return
     setIsLoadingBaseline(true)
 
     // Fetch the golden baseline blob once — does NOT re-run on live config refresh
