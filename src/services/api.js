@@ -11,7 +11,8 @@
 //   - Drift & stats:   fetchDriftEvents, fetchRecentChanges, fetchStatsToday, fetchChartStats
 //   - Remediation:     remediateToBaseline, requestRemediation
 //   - Monitoring:      cacheState, stopMonitoring
-//   - AI:              fetchAiExplanation, fetchAiRecommendation
+//   - Policy:          fetchPolicyCompliance
+//   - AI:              fetchAiExplanation, fetchAiRecommendation, fetchAnomalies
 //   - Genome:          fetchGenomeSnapshots, saveGenomeSnapshot, promoteGenomeSnapshot,
 //                      rollbackToSnapshot, deleteGenomeSnapshot
 
@@ -182,6 +183,14 @@ export async function stopMonitoring(subscriptionId, resourceGroupId, resourceId
 
 // ── Policy ────────────────────────────────────────────────────────────────────
 
+// Returns Azure Policy compliance state for a resource or resource group
+// Returns { total, nonCompliant, compliant, violations[] }
+// Calls GET /api/policy/compliance → PolicyInsightsClient
+export async function fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId = null) {
+  const queryParams = new URLSearchParams({ subscriptionId, resourceGroupId })
+  if (resourceId) queryParams.set('resourceId', resourceId)
+  return apiRequest(`/policy/compliance?${queryParams}`)
+}
 
 
 // ── AI Features ───────────────────────────────────────────────────────────────
@@ -200,6 +209,12 @@ export async function fetchAiRecommendation(driftRecord) {
   return apiRequest('/ai/recommend', { method: 'POST', body: JSON.stringify(driftRecord) })
 }
 
+// Requests AI anomaly detection across the last 50 drift records
+// Returns { anomalies: [{ title, description, severity, affectedResource }] }
+// Calls GET /api/ai/anomalies → Express proxy → aiOperations Azure Function → GPT-4o
+// export async function fetchAnomalies(subscriptionId) {
+//   return apiRequest(`/ai/anomalies?subscriptionId=${subscriptionId}`)
+// }
 
 
 // ── Configuration Genome ──────────────────────────────────────────────────────
