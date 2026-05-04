@@ -4,7 +4,7 @@
 // What this page does:
 //   - Lets the user pick a Subscription → Resource Group → Resource from dropdowns
 //   - On Submit: fetches live ARM config, shows it as a JSON tree, starts Socket.IO
-//     monitoring, seeds the diff cache, fetches policy compliance and AI anomalies
+//     monitoring, seeds the diff cache
 //   - Live Activity Feed tab: shows real-time ARM change events pushed via Socket.IO
 //   - On Stop: clears monitoring session, resets all state
 //   - Navigate to Comparison Page or Genome Page via toolbar buttons
@@ -13,7 +13,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import ForceGraph2D from 'react-force-graph-2d'
+import DependencyGraph from '../components/DependencyGraph'
 import JsonTree from '../components/JsonTree'
 import { useAzureScope } from '../hooks/useAzureScope'
 import { useDriftSocket } from '../hooks/useDriftSocket'
@@ -49,9 +49,7 @@ export default function DriftScanner() {
   const [driftPrediction, setDriftPrediction] = useState(null)
   const [isPredictionLoading, setIsPredictionLoading] = useState(false)
 
-  // Feat 7: Dependency Graph
-  const [graphData, setGraphData] = useState({ nodes: [], links: [] })
-  const [isGraphLoading, setIsGraphLoading] = useState(false)
+  // Feat 7: Dependency Graph — no local state needed, DependencyGraph.jsx manages its own fetch
 
   const {
     subscription, setSubscription,
@@ -66,8 +64,6 @@ export default function DriftScanner() {
     liveEvents, setLiveEvents,
     driftEvents, setDriftEvents,
     scanProgress, setScanProgress,
-    policyData, setPolicyData,
-    anomalies, setAnomalies,
     scanInterval, monitorScope, jsonTreeRef,
   } = useDashboard()
 
@@ -130,7 +126,7 @@ export default function DriftScanner() {
   // 1. Plays through the LIVE_EVENTS_TEMPLATE animation steps (progress bar)
   // 2. Fetches live ARM config from /api/configuration (or demo config if offline)
   // 3. On success: sets isSubmitted=true (unblocks Socket.IO), seeds the diff cache,
-  //    starts monitoring session, fetches policy compliance and AI anomalies
+  //    starts monitoring session
   const handleSubmit = () => {
     if (!subscription || !resourceGroup || isScanning) return
 
@@ -169,13 +165,9 @@ export default function DriftScanner() {
               setConfigData(fetchedConfig)
 
               // // Fetch Azure Policy compliance state for the selected scope
-              // fetchPolicyCompliance(subscription, resourceGroup, resource || null)
               //   .then(policyResult => setPolicyData(policyResult)).catch(() => {})
 
               if (!isDemoMode) {
-                // Fetch AI anomaly detection across last 50 drift records
-                // fetchAnomalies(subscription)
-                //   .then(anomalyResult => setAnomalies(anomalyResult?.anomalies || [])).catch(() => {})
 
                 // Seed the diff cache so the first Socket.IO event has a previous state to diff against
                 const resourcesToCacheForDiff = fetchedConfig.resources
@@ -196,44 +188,7 @@ export default function DriftScanner() {
                   timestamp: new Date().toLocaleTimeString(),
                   id: Date.now(),
                 }])
-                
-                // Fetch Drift Prediction (Feature 2)
-                setIsPredictionLoading(true)
-                setTimeout(() => {
-                  setDriftPrediction({
-                    likelihood: 'HIGH',
-                    predictedDays: 3,
-                    fieldsAtRisk: ['properties.networkAcls.defaultAction', 'tags.environment'],
-                    reasoning: 'This resource has drifted 4 times in the last 30 days, averaging every 7 days. The last drift was 4 days ago. Network ACL changes are the most common pattern.',
-                    basedOn: '4 drift events over 30 days'
-                  })
-                  setIsPredictionLoading(false)
-                }, 1500)
-
-                // Fetch Dependency Graph (Feature 7)
-                setIsGraphLoading(true)
-                setTimeout(() => {
-                  setGraphData({
-                    nodes: [
-                      { id: 'vnet', name: 'adip-vnet', type: 'VNet', color: '#1995ff', val: 5 },
-                      { id: 'subnet', name: 'default', type: 'Subnet', color: '#10b981', val: 4 },
-                      { id: 'nsg', name: 'testing-vm-nsg', type: 'NSG', color: '#ef4444', val: 6, isDrifted: true },
-                      { id: 'nic', name: 'testing-vm-nic', type: 'NIC', color: '#8b5cf6', val: 3 },
-                      { id: 'vm', name: 'testing-vm', type: 'VM', color: '#f97316', val: 8 },
-                      { id: 'disk', name: 'testing-vm_OsDisk', type: 'Disk', color: '#94a3b8', val: 3 },
-                      { id: 'ip', name: 'testing-vm-ip', type: 'PublicIP', color: '#06b6d4', val: 3 }
-                    ],
-                    links: [
-                      { source: 'vnet', target: 'subnet', name: 'contains' },
-                      { source: 'subnet', target: 'nsg', name: 'protected by' },
-                      { source: 'nic', target: 'nsg', name: 'uses' },
-                      { source: 'vm', target: 'nic', name: 'attached to' },
-                      { source: 'vm', target: 'disk', name: 'attached to' },
-                      { source: 'nic', target: 'ip', name: 'assigned' }
-                    ]
-                  })
-                  setIsGraphLoading(false)
-                }, 1200)
+                // Dependency Graph is fetched on-demand by DependencyGraph.jsx when the tab is opened
               }
             }
           })
@@ -272,9 +227,7 @@ export default function DriftScanner() {
     setLiveEvents([])
     setScanProgress(0)
     setPolicyData(null)
-    setAnomalies([])
     setDriftPrediction(null)
-    setGraphData({ nodes: [], links: [] })
     clearDriftEvents()      // clears the live activity feed
   }
 
@@ -303,7 +256,7 @@ export default function DriftScanner() {
         navigateToDriftScanner={() => {}}
       />
       {/* ── Main ── */}
-      <main className="ds-main">
+      <main className="ds-main" id="main-content" role="main">
         <div className="ds-content">
 
           {/* Header */}
@@ -325,30 +278,32 @@ export default function DriftScanner() {
           </header>
 
           {/* Filter Section */}
-          <section className="ds-filter-section">
+          <section className="ds-filter-section" aria-label="Resource selection">
             <div className="ds-filter-grid">
               <div className="ds-filter-field">
-                <label className="ds-filter-label">Subscription</label>
+                <label className="ds-filter-label" htmlFor="filter-subscription">Subscription</label>
                 <select className="ds-filter-select" value={subscription}
                   onChange={e => { const selectedSubId = e.target.value; setSubscription(selectedSubId); setResourceGroup(''); setResource(''); setConfigData(null); fetchRGs(selectedSubId) }}
-                  disabled={scopeLoading && !subscriptions.length} id="filter-subscription">
+                  disabled={scopeLoading && !subscriptions.length} id="filter-subscription"
+                  aria-required="true">
                   <option value="">Select subscription...</option>
                   {subscriptions.map(sub => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
                 </select>
               </div>
 
               <div className="ds-filter-field">
-                <label className="ds-filter-label">Resource Group</label>
+                <label className="ds-filter-label" htmlFor="filter-resource-group">Resource Group</label>
                 <select className="ds-filter-select" value={resourceGroup}
                   onChange={e => { const selectedRgId = e.target.value; setResourceGroup(selectedRgId); setResource(''); setConfigData(null); fetchResources(subscription, selectedRgId) }}
-                  disabled={!subscription || scopeLoading} id="filter-resource-group">
+                  disabled={!subscription || scopeLoading} id="filter-resource-group"
+                  aria-required="true">
                   <option value="">Select resource group...</option>
                   {resourceGroups.map(resourceGroup => <option key={resourceGroup.id} value={resourceGroup.id}>{resourceGroup.name}</option>)}
                 </select>
               </div>
 
               <div className="ds-filter-field">
-                <label className="ds-filter-label">Resource</label>
+                <label className="ds-filter-label" htmlFor="filter-resource">Resource</label>
                 <select className="ds-filter-select" value={resource}
                   onChange={e => setResource(e.target.value)}
                   disabled={!resourceGroup || scopeLoading} id="filter-resource">
@@ -379,53 +334,12 @@ export default function DriftScanner() {
               </div>
             )}
 
-            {/* AI Anomalies & Drift Prediction (Feature 2) */}
-            {(anomalies?.length > 0 || driftPrediction || isPredictionLoading) && (
-              <div className="ds-anomalies" style={{ marginTop: '16px' }}>
-                <span className="ds-anomaly-label">AI Insights</span>
-                
-                {/* Anomalies */}
-                {anomalies?.slice(0, 1).map((anomaly, anomalyIndex) => (
-                  <div key={anomalyIndex} className="ds-anomaly-card">
-                    <div className="ds-anomaly-title">{anomaly.title}</div>
-                    <div className="ds-anomaly-desc">{anomaly.description}</div>
-                  </div>
-                ))}
-                
-                {/* Prediction Card */}
-                {isPredictionLoading ? (
-                  <div className="ds-scanning" style={{ background: 'var(--panel-bg)', padding: '16px', borderRadius: '8px' }}>
-                    <div className="ds-scanning-ring"/> Computing drift prediction...
-                  </div>
-                ) : driftPrediction ? (
-                  <div className="ds-anomaly-card" style={{ borderLeft: '4px solid #ef4444', marginTop: '12px', background: 'var(--panel-bg)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <div className="ds-anomaly-title">
-                        <span className="material-symbols-outlined" style={{fontSize: 16, verticalAlign: 'middle', marginRight: 4, color: '#ef4444'}}>psychology</span> 
-                        Drift Prediction
-                      </div>
-                      <span style={{ background: '#ef444420', color: '#ef4444', padding: '2px 6px', borderRadius: 4, fontSize: 11, fontWeight: 'bold' }}>
-                        {driftPrediction.likelihood} LIKELIHOOD
-                      </span>
-                    </div>
-                    <div className="ds-anomaly-desc">
-                      <div><strong style={{ color: 'var(--text-primary)' }}>Predicted next drift:</strong> ~{driftPrediction.predictedDays} days</div>
-                      <div style={{ marginTop: 6 }}><strong style={{ color: 'var(--text-primary)' }}>Fields at risk:</strong></div>
-                      <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                        {driftPrediction.fieldsAtRisk.map(f => <li key={f}><code style={{ background: 'var(--bg-lighter)', padding: '2px 4px', borderRadius: '4px', fontSize: '11px' }}>{f}</code></li>)}
-                      </ul>
-                      <div style={{ fontStyle: 'italic', marginTop: 8, color: 'var(--text-secondary)' }}>"{driftPrediction.reasoning}"</div>
-                      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--border-strong)' }}>Based on {driftPrediction.basedOn}</div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            )}
+
           </section>
 
           {/* Progress */}
           {isScanning && (
-            <div className="ds-progress">
+            <div className="ds-progress" role="progressbar" aria-valuenow={scanProgress} aria-valuemin={0} aria-valuemax={100} aria-label="Scan progress">
               <div className="ds-progress-fill" style={{ width: `${scanProgress}%` }} />
             </div>
           )}
@@ -509,26 +423,18 @@ export default function DriftScanner() {
             {/* Dependency Graph Tab (Feature 7) */}
             {activeTab === 'graph' && (
               <div className="ds-graph-inner" style={{ height: '700px', width: '100%', position: 'relative', overflow: 'hidden', background: 'var(--panel-bg)', borderRadius: '0 0 12px 12px' }}>
-                {isGraphLoading ? (
-                  <div className="ds-scanning"><div className="ds-scanning-ring" /> Building graph layout...</div>
-                ) : (
-                  <ForceGraph2D
-                    graphData={graphData}
-                    nodeLabel={node => `${node.name} (${node.type}) ${node.isDrifted ? ' - DRIFTED RECENTLY' : ''}`}
-                    nodeColor={node => node.isDrifted ? '#ef4444' : node.color}
-                    nodeRelSize={6}
-                    linkColor={() => '#64748b'}
-                    linkDirectionalArrowLength={3.5}
-                    linkDirectionalArrowRelPos={1}
-                    onNodeClick={node => navigate('/comparison', { state: { subscriptionId: subscription || 'sub-1', resourceGroupId: resourceGroup || 'rg-1', resourceId: node.id, resourceName: node.name } })}
-                  />
-                )}
-                <div style={{ position: 'absolute', top: 16, right: 16, background: 'var(--panel-bg)', padding: '12px', border: '1px solid var(--border-light)', borderRadius: '8px', zIndex: 10, fontSize: '13px' }}>
-                  <strong>Legend</strong>
-                  <div style={{ display: 'flex', alignItems: 'center', marginTop: 8 }}><span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#ef4444', marginRight: 8 }}/> Drifted Node</div>
-                  <div style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}><span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#1995ff', marginRight: 8 }}/> VNet/Subnet</div>
-                  <div style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}><span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#f97316', marginRight: 8 }}/> Compute</div>
-                </div>
+                <DependencyGraph
+                  subscriptionId={subscription}
+                  resourceGroupId={resourceGroup}
+                  onNodeClick={node => navigate('/comparison', {
+                    state: {
+                      subscriptionId:  subscription,
+                      resourceGroupId: resourceGroup,
+                      resourceId:      node.id,
+                      resourceName:    node.name,
+                    }
+                  })}
+                />
               </div>
             )}
           </div>

@@ -73,6 +73,15 @@ export async function fetchResourceConfiguration(subscriptionId, resourceGroupId
 // Fetches the golden baseline blob for a resource from 'baselines' container
 // Returns { subscriptionId, resourceId, resourceState, promotedAt } or null if not found
 // Calls GET /api/baselines
+// Runs server-side drift comparison with suppression rules applied
+// Returns { differences, severity, liveState, baselineState, changeCount }
+export async function runCompare(subscriptionId, resourceGroupId, resourceId) {
+  return apiRequest('/compare', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId }),
+  })
+}
+
 export async function fetchBaseline(subscriptionId, resourceId) {
   const queryParams = new URLSearchParams({ subscriptionId, resourceId })
   return apiRequest(`/baselines?${queryParams}`)
@@ -277,10 +286,10 @@ export default {
 // ── Reports ──────────────────────────────────────────────────────────────────
 
 // Generates a drift analysis report and saves it to blob storage
-export async function generateDriftReport(subscriptionId, periodDays = 7, sendEmail = false) {
+export async function generateDriftReport(subscriptionId, periodDays = 7, sendEmail = false, recipientEmail = '') {
   return apiRequest('/reports/generate', {
     method: 'POST',
-    body: JSON.stringify({ subscriptionId, periodDays, sendEmail }),
+    body: JSON.stringify({ subscriptionId, periodDays, sendEmail, recipientEmail }),
   })
 }
 
@@ -305,4 +314,99 @@ export async function deleteReport(blobKey) {
 // Returns per-caller change and drift counts for a subscription
 export async function fetchChangeAttribution(subscriptionId, days = 30) {
   return apiRequest(`/attribution?subscriptionId=${encodeURIComponent(subscriptionId)}&days=${days}`)
+}
+
+// ── Dependency Graph ─────────────────────────────────────────────────────────
+
+export async function fetchDependencyGraph(subscriptionId, resourceGroupId) {
+  return apiRequest(`/dependency-graph?subscriptionId=${encodeURIComponent(subscriptionId)}&resourceGroupId=${encodeURIComponent(resourceGroupId)}`)
+}
+
+// ── Suppression Rules ────────────────────────────────────────────────────────
+
+export async function fetchSuppressionRules(subscriptionId) {
+  return apiRequest(`/suppression-rules?subscriptionId=${encodeURIComponent(subscriptionId)}`)
+}
+
+export async function createSuppressionRule(subscriptionId, fieldPath, resourceGroupId, resourceId, changeTypes, reason) {
+  return apiRequest('/suppression-rules', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, fieldPath, resourceGroupId, resourceId, changeTypes, reason }),
+  })
+}
+
+export async function deleteSuppressionRule(subscriptionId, rowKey) {
+  return apiRequest(`/suppression-rules/${encodeURIComponent(rowKey)}?subscriptionId=${encodeURIComponent(subscriptionId)}`, { method: 'DELETE' })
+}
+
+// ── Remediation Schedule ─────────────────────────────────────────────────────
+
+export async function scheduleRemediation({ subscriptionId, resourceGroupId, resourceId, severity, scheduledAt, autoApprovalHours }) {
+  return apiRequest('/remediation-schedule', {
+    method: 'POST',
+    body: JSON.stringify({ subscriptionId, resourceGroupId, resourceId, severity, scheduledAt, autoApprovalHours }),
+  })
+}
+
+export async function fetchRemediationSchedules(subscriptionId) {
+  return apiRequest(`/remediation-schedule?subscriptionId=${encodeURIComponent(subscriptionId)}`)
+}
+
+export async function cancelRemediationSchedule(subscriptionId, rowKey) {
+  return apiRequest(`/remediation-schedule/${encodeURIComponent(rowKey)}?subscriptionId=${encodeURIComponent(subscriptionId)}`, { method: 'DELETE' })
+}
+
+// ── Drift Impact ─────────────────────────────────────────────────────────────
+
+export async function fetchDriftImpact(subscriptionId, days = 30) {
+  return apiRequest(`/drift-impact?subscriptionId=${encodeURIComponent(subscriptionId)}&days=${days}`)
+}
+
+export async function fetchResourceDriftEvents(subscriptionId, resourceId, limit = 10) {
+  return apiRequest(`/drift-impact/resource?subscriptionId=${encodeURIComponent(subscriptionId)}&resourceId=${encodeURIComponent(resourceId)}&limit=${limit}`)
+}
+
+// ── Compliance Impact ────────────────────────────────────────────────────────
+
+export async function fetchComplianceImpact(differences) {
+  return apiRequest('/compliance-impact', {
+    method: 'POST',
+    body: JSON.stringify({ differences }),
+  })
+}
+
+// ── User Preferences ─────────────────────────────────────────────────────────
+
+export async function fetchUserPreferences(username) {
+  return apiRequest(`/user-preferences?username=${encodeURIComponent(username)}`)
+}
+
+export async function saveUserPreferences(username, preferences) {
+  return apiRequest('/user-preferences', {
+    method: 'POST',
+    body: JSON.stringify({ username, preferences }),
+  })
+}
+
+// ── Policy Assignments ───────────────────────────────────────────────────────
+
+export async function fetchPolicyAssignments(subscriptionId, resourceGroupId) {
+  return apiRequest(`/policy/assignments?subscriptionId=${encodeURIComponent(subscriptionId)}&resourceGroupId=${encodeURIComponent(resourceGroupId)}`)
+}
+
+// ── Cost Estimate ────────────────────────────────────────────────────────────
+
+export async function fetchCostEstimate(resourceType, fieldPath, oldValue, newValue, location) {
+  const p = new URLSearchParams({
+    resourceType,
+    fieldPath,
+    oldValue: typeof oldValue === 'object' ? JSON.stringify(oldValue) : String(oldValue ?? ''),
+    newValue: typeof newValue === 'object' ? JSON.stringify(newValue) : String(newValue ?? ''),
+    location: location || 'westus2',
+  })
+  return apiRequest(`/cost-estimate?${p}`)
+}
+
+export async function fetchCostSavings(subscriptionId, days = 30) {
+  return apiRequest(`/cost-savings?subscriptionId=${encodeURIComponent(subscriptionId)}&days=${days}`)
 }

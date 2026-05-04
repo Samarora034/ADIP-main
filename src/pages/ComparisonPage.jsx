@@ -17,7 +17,31 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { diff as deepDiff } from 'deep-diff'
 import JsonTree from '../components/JsonTree'
 import NavBar from '../components/NavBar'
-import { fetchBaseline, remediateToBaseline, fetchPolicyCompliance, fetchAiExplanation, fetchAiRecommendation, uploadBaseline, requestRemediation } from '../services/api'
+import ScheduleRemediationModal from '../components/ScheduleRemediationModal'
+import { fetchBaseline, runCompare, remediateToBaseline, fetchAiExplanation, fetchAiRecommendation, uploadBaseline, requestRemediation, fetchResourceConfiguration, fetchComplianceImpact, fetchSuppressionRules, fetchCostEstimate } from '../services/api'
+import { getControlsForPath } from '../utils/complianceMap'
+
+// Shows monthly cost delta badge for SKU/tier/encryption drift rows
+function CostDeltaBadge({ resourceType, location, fieldPath, oldValue, newValue }) {
+  const [delta, setDelta] = React.useState(null)
+  React.useEffect(() => {
+    if (!oldValue || !newValue || String(oldValue) === String(newValue)) return
+    fetchCostEstimate(resourceType, fieldPath, oldValue, newValue, location)
+      .then(r => { if (r?.deltaPerMonth != null) setDelta(r) })
+      .catch(() => {})
+  }, [resourceType, location, fieldPath, oldValue, newValue])
+  if (!delta?.deltaPerMonth) return null
+  const positive = delta.deltaPerMonth > 0
+  const color    = positive ? '#ef4444' : '#10b981'
+  const sign     = positive ? '+' : ''
+  return (
+    <span title={delta.note || `Estimated monthly cost impact (${delta.referenceGB || 1024}GB reference)`}
+      style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, marginLeft: 6,
+        background: `${color}18`, color, border: `1px solid ${color}30`, whiteSpace: 'nowrap', cursor: 'help' }}>
+      {sign}${Math.abs(delta.deltaPerMonth).toFixed(2)}/mo
+    </span>
+  )
+}
 import { useDashboard } from '../context/DashboardContext'
 import './ComparisonPage.css'
 
@@ -50,9 +74,18 @@ function formatDifferences(rawDiff) {
 function normaliseState(state) {
   if (!state) return {}
   const VOLATILE = ['etag','changedTime','createdTime','provisioningState','lastModifiedAt','systemData','_ts','_etag','_rid','_self']
-  const strip = (obj) => {
-    if (Array.isArray(obj)) return obj.map(strip)
-    if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(obj).filter(([k]) => !VOLATILE.includes(k)).map(([k,v]) => [k, strip(v)]))
+  // VM and general read-only fields that should never appear as drift
+  const READONLY = ['vmId','timeCreated','instanceView','powerState','statuses','resources','latestModelApplied',
+    'resourceGuid','defaultSecurityRules','adminUsername','adminPassword','computerName',
+    'disablePasswordAuthentication','ssh','provisionVMAgent','patchSettings','enableAutomaticUpdates','winRM']
+  const strip = (obj, parentKey = '') => {
+    if (Array.isArray(obj)) return obj.map(item => strip(item, parentKey))
+    if (obj && typeof obj === 'object') return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([k]) => !VOLATILE.includes(k) && !READONLY.includes(k))
+        .filter(([k]) => !(parentKey === 'osDisk' && ['name','managedDisk'].includes(k)))
+        .map(([k,v]) => [k, strip(v, k)])
+    )
     return obj
   }
   return strip(JSON.parse(JSON.stringify(state)))
@@ -74,6 +107,21 @@ export default function ComparisonPage() {
   const effectiveId = resourceId || resourceGroupId
   const { subscription, resourceGroup, resource, configData } = useDashboard()
   const user = (() => { try { return JSON.parse(sessionStorage.getItem('user') || '{}') } catch { return {} } })()
+
+  // Live config — starts from navigation state, refreshed every 5 seconds
+  const [currentLive, setCurrentLive] = useState(passedLive)
+
+  // Poll live ARM config every 5 seconds — updates diff silently without loading screen
+  useEffect(() => {
+    if (!subscriptionId || !resourceGroupId || !resourceId) return
+    const id = setInterval(async () => {
+      try {
+        const fresh = await fetchResourceConfiguration(subscriptionId, resourceGroupId, resourceId)
+        if (fresh) setCurrentLive(fresh)
+      } catch { /* non-fatal */ }
+    }, 5000)
+    return () => clearInterval(id)
+  }, [subscriptionId, resourceGroupId, resourceId])
 
   // The stripped golden baseline config fetched from 'baselines' blob storage
   const [baselineConfig, setBaselineConfig] = useState(null)
@@ -103,9 +151,6 @@ export default function ComparisonPage() {
   // The diff shown in the success banner after remediation
   const [remediationDiffSummary, setRemediationDiffSummary] = useState(null)
 
-  // Azure Policy compliance result for this resource
-  const [policyComplianceData, setPolicyComplianceData] = useState(null)
-
   // Plain-English explanation from Azure OpenAI (loaded async after diff)
   const [aiDriftExplanation, setAiDriftExplanation] = useState(null)
 
@@ -123,58 +168,49 @@ export default function ComparisonPage() {
 
   // Feature 6: Schedule Remediation Modal
   const [showScheduleModal, setShowScheduleModal] = useState(false)
-  const [scheduleTime, setScheduleTime] = useState('')
-  const [isPolicyCreated, setIsPolicyCreated] = useState(false)
+  const [scheduledConfirmation, setScheduledConfirmation] = useState(null)
+  const [isPolicyCreated,   setIsPolicyCreated]   = useState(false)
+  const [policiesCreated,   setPoliciesCreated]   = useState([])
 
   // Refs to the JsonTree components so we can call expandAll/collapseAll imperatively
   const baselineTreeRef = useRef(null)
   const liveTreeRef = useRef(null)
+  const aiExplainedRef = useRef(false)  // prevents AI re-fetch on every 5s live refresh
 
-  // On mount: fetch the golden baseline and policy compliance in parallel
-  // Then compute the diff between baseline and the live config passed via navigation state
+  // On mount: call POST /api/compare (server-side diff with suppression rules applied)
+  // Suppression rules stored in Azure Table Storage are applied before returning diffs
   useEffect(() => {
-    if (!subscriptionId) return
-    setIsLoadingBaseline(true)
+    if (!subscriptionId || !resourceGroupId) return
+    if (!baselineConfig) setIsLoadingBaseline(true)
 
-    // Fetch policy compliance in the background (non-blocking)
-    // fetchPolicyCompliance(subscriptionId, resourceGroupId, resourceId)
-    //   .then(setPolicyComplianceData).catch(() => {})
+    runCompare(subscriptionId, resourceGroupId, resourceId || null)
+      .then(result => {
+        if (!result) { setBaselineNotFound(true); return }
 
-    // Fetch the golden baseline blob for this resource
-    fetchBaseline(subscriptionId, effectiveId).then(baselineDocument => {
-      if (baselineDocument?.resourceState) {
-        // Strip volatile fields before comparing so etag/provisioningState don't show as drift
-        const strippedBaseline = normaliseState(baselineDocument.resourceState)
-        const strippedLive     = normaliseState(passedLive)
-        setBaselineConfig(strippedBaseline)
+        // result.baselineState may be null if no baseline exists yet
+        if (!result.baselineState) { setBaselineNotFound(true); return }
 
-        // Run deep field-level diff
-        const rawDiffResult      = deepDiff(strippedBaseline, strippedLive) || []
-        const formattedDiffItems = formatDifferences(rawDiffResult)
-        setFieldDifferences(formattedDiffItems)
-        setDriftSeverity(classifySeverity(formattedDiffItems))
+        setBaselineConfig(normaliseState(result.baselineState))
+        if (result.liveState) setCurrentLive(result.liveState)
+        const diffs = result.differences || []
+        setFieldDifferences(diffs)
+        setDriftSeverity(classifySeverity(diffs))
 
-        // If drift was found, fetch AI explanation in the background
-        if (formattedDiffItems.length > 0) {
+        if (diffs.length > 0 && !aiExplainedRef.current) {
+          aiExplainedRef.current = true
           setIsAiLoading(true)
           fetchAiExplanation({
-            resourceId,
-            resourceGroup: resourceGroupId,
-            subscriptionId,
-            severity: classifySeverity(formattedDiffItems),
-            differences: formattedDiffItems,
-            changes:     formattedDiffItems,
+            resourceId, resourceGroup: resourceGroupId, subscriptionId,
+            severity: classifySeverity(diffs), differences: diffs, changes: diffs,
           })
-            .then(aiResponse => setAiDriftExplanation(aiResponse?.explanation || null))
+            .then(r => setAiDriftExplanation(r?.explanation || null))
             .catch(() => {})
             .finally(() => setIsAiLoading(false))
         }
-      } else {
-        // No baseline stored for this resource
-        setBaselineNotFound(true)
-      }
-    }).catch(() => setBaselineNotFound(true)).finally(() => setIsLoadingBaseline(false))
-  }, [subscriptionId, resourceId])
+      })
+      .catch(() => setBaselineNotFound(true))
+      .finally(() => setIsLoadingBaseline(false))
+  }, [subscriptionId, resourceId, currentLive])
 
   // handleRemediate — called when the user clicks 'Apply Fix Now' or 'Request Approval'
   // Low severity: immediately calls ARM PUT via /api/remediate to revert to baseline
@@ -197,12 +233,16 @@ export default function ComparisonPage() {
 
     try {
       // Compute the diff that will be shown in the success banner
-      const strippedLiveForSummary = normaliseState(passedLive)
+      const strippedLiveForSummary = normaliseState(currentLive)
       setRemediationDiffSummary(formatDifferences(deepDiff(baselineConfig || {}, strippedLiveForSummary) || []))
 
       if (driftSeverity === 'low') {
         // Low severity: apply immediately via ARM PUT (no approval needed)
-        await remediateToBaseline(subscriptionId, resourceGroupId, effectiveId)
+        const result = await remediateToBaseline(subscriptionId, resourceGroupId, effectiveId)
+        if (result?.policiesCreated?.length) {
+          setPoliciesCreated(result.policiesCreated)
+          setIsPolicyCreated(true)
+        }
       } else {
         // Medium/High/Critical: send approval email to admin
         const loggedInUser = (() => { try { return JSON.parse(sessionStorage.getItem('user') || '{}') } catch { return {} } })()
@@ -263,12 +303,13 @@ export default function ComparisonPage() {
         // Re-fetch the baseline and recompute the diff
         const updatedBaselineDocument = await fetchBaseline(subscriptionId, effectiveId)
         if (updatedBaselineDocument?.resourceState) {
-          const newStrippedBaseline = normaliseState(updatedBaselineDocument.resourceState)
-          const strippedLive        = normaliseState(passedLive)
-          const newDiffItems        = formatDifferences(deepDiff(newStrippedBaseline, strippedLive) || [])
-          setBaselineConfig(newStrippedBaseline)
-          setFieldDifferences(newDiffItems)
-          setDriftSeverity(classifySeverity(newDiffItems))
+          // Re-run server-side compare so suppression rules are applied to the new baseline
+          const recompare = await runCompare(subscriptionId, resourceGroupId, resourceId || null).catch(() => null)
+          if (recompare?.baselineState) {
+            setBaselineConfig(normaliseState(recompare.baselineState))
+            setFieldDifferences(recompare.differences || [])
+            setDriftSeverity(classifySeverity(recompare.differences || []))
+          }
           setBaselineNotFound(false)
           setBaselineUploadMessage({ ok: true, text: 'Baseline uploaded and applied.' })
         } else {
@@ -289,14 +330,14 @@ export default function ComparisonPage() {
   const collapseAll = useCallback(() => { baselineTreeRef.current?.collapseAll(); liveTreeRef.current?.collapseAll() }, [])
   const displayName = resourceName ?? resourceId?.split('/').pop() ?? resourceGroupId
 
-  if (!subscriptionId || !passedLive) {
+  if (!subscriptionId || !currentLive) {
     return (
       <div className="cp-root">
         <NavBar user={user} subscription={subscription} resourceGroup={resourceGroup} resource={resource} configData={configData} />
-        <div className="cp-empty-state">
+        <div className="cp-empty-state" role="status">
           <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#c2c7d0' }}>compare_arrows</span>
-          <p>No comparison data. Navigate here from the Drift Scanner.</p>
-          <button className="cp-btn cp-btn--primary" onClick={() => navigate('/dashboard')}>← Go to Drift Scanner</button>
+          <p>No comparison data available. Navigate here from the Drift Scanner or Dashboard.</p>
+          <button className="cp-btn cp-btn--primary" onClick={() => navigate('/dashboard')}>← Go to Dashboard</button>
         </div>
       </div>
     )
@@ -306,7 +347,7 @@ export default function ComparisonPage() {
     <div className="cp-root">
       <NavBar user={user} subscription={subscription} resourceGroup={resourceGroup} resource={resource} configData={configData} />
 
-      <main className="cp-main">
+      <main className="cp-main" id="main-content" role="main">
         {/* Page header */}
         <header className="cp-header">
           <div>
@@ -321,7 +362,6 @@ export default function ComparisonPage() {
           </div>
           <div className="cp-header-actions">
             {driftSeverity && <span className="cp-severity-badge" style={{ background: `${SEV_COLOR[driftSeverity]}18`, color: SEV_COLOR[driftSeverity], border: `1px solid ${SEV_COLOR[driftSeverity]}40` }}>{driftSeverity.toUpperCase()}</span>}
-            {policyComplianceData?.nonCompliant > 0 && <span className="cp-severity-badge" style={{ background: '#dc262618', color: '#dc2626', border: '1px solid #dc262640' }}>POLICY: {policyComplianceData.nonCompliant} VIOLATION(S)</span>}
             <label className="cp-btn cp-btn--secondary" style={{ cursor: 'pointer' }}>
               <input type="file" accept=".json" onChange={handleUpload} style={{ display: 'none' }} disabled={isUploadingBaseline} />
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>upload</span>
@@ -357,8 +397,8 @@ export default function ComparisonPage() {
         </header>
 
         {/* Alerts */}
-        {baselineUploadMessage && <div className={`cp-alert cp-alert--${baselineUploadMessage.ok ? 'success' : 'error'}`}>{baselineUploadMessage.text}</div>}
-        {remediationError && <div className="cp-alert cp-alert--error">Failed to remediate: {remediationError}</div>}
+        {baselineUploadMessage && <div className={`cp-alert cp-alert--${baselineUploadMessage.ok ? 'success' : 'error'}`} role="alert">{baselineUploadMessage.text}</div>}
+        {remediationError && <div className="cp-alert cp-alert--error" role="alert">Failed to remediate: {remediationError}</div>}
         {remediationSucceeded && remediationDiffSummary !== null && (
           <div className="cp-alert cp-alert--success" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
@@ -366,13 +406,17 @@ export default function ComparisonPage() {
               {remediationDiffSummary.length > 0 && <span> {remediationDiffSummary.length} field change(s) queued.</span>}
             </div>
             {/* Feature 8: Policy as Code Enforcement */}
-            <button className="cp-btn cp-btn--primary" onClick={() => {
-              alert('Azure Policy "Deny modifications to monitored fields" successfully created and assigned to resource group! This will prevent future drift.')
-              setIsPolicyCreated(true)
-            }} disabled={isPolicyCreated}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>policy</span>
-              {isPolicyCreated ? 'Policy Created' : 'Create Preventative Policy'}
-            </button>
+            {policiesCreated.length > 0 ? (
+              <div style={{ fontSize: 12, color: '#10b981' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14, verticalAlign: 'middle' }}>policy</span>
+                {' '}{policiesCreated.length} policy assignment{policiesCreated.length !== 1 ? 's' : ''} created to prevent recurrence
+              </div>
+            ) : (
+              <button className="cp-btn cp-btn--primary" disabled={isPolicyCreated || driftSeverity !== 'low'} title={driftSeverity !== 'low' ? 'Policy enforcement runs automatically after approval' : ''}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>policy</span>
+                {isPolicyCreated ? 'Policy Created' : 'Policy Enforcement Active'}
+              </button>
+            )}
           </div>
         )}
 
@@ -396,31 +440,8 @@ export default function ComparisonPage() {
           </div>
         )}
 
-        {/* Feature 5: Drift to Compliance Mapping */}
-        {fieldDifferences.length > 0 && (
-          <div className="cp-card cp-compliance-card" style={{ borderLeft: '4px solid #ca8a04', marginTop: 16, marginBottom: 16 }}>
-            <div className="cp-card-header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="material-symbols-outlined" style={{ color: '#ca8a04' }}>gavel</span>
-                <h3 style={{ margin: 0 }}>Compliance Impact</h3>
-              </div>
-              <button className="cp-btn cp-btn--secondary" onClick={() => navigate('/compliance')} style={{ marginLeft: 'auto', fontSize: 12, padding: '4px 8px' }}>
-                View Full Report
-              </button>
-            </div>
-            <div className="cp-card-body" style={{ padding: '0 16px 16px 16px' }}>
-               <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>This drift violates the following mapped compliance controls:</p>
-               <ul style={{ margin: 0, paddingLeft: 24, fontSize: 13, lineHeight: 1.6 }}>
-                 <li><strong style={{ color: 'var(--text-primary)' }}>CIS Azure Foundational 1.4.0:</strong> 5.1.3 - Ensure that 'Network Security Group Flow Log' retention period is 'greater than 90 days'</li>
-                 <li><strong style={{ color: 'var(--text-primary)' }}>NIST SP 800-53 Rev. 5:</strong> SC-7 - Boundary Protection</li>
-                 <li><strong style={{ color: 'var(--text-primary)' }}>ISO 27001:2013:</strong> A.13.1.1 - Network Controls</li>
-               </ul>
-            </div>
-          </div>
-        )}
-
         {/* Loading */}
-        {isLoadingBaseline && <div className="cp-loading"><div className="cp-loading-ring" /><span>Loading golden baseline...</span></div>}
+        {isLoadingBaseline && <div className="cp-loading" role="status" aria-live="polite"><div className="cp-loading-ring" aria-hidden="true" /><span>Loading golden baseline...</span></div>}
 
         {/* No baseline */}
         {!isLoadingBaseline && baselineNotFound && (
@@ -443,11 +464,33 @@ export default function ComparisonPage() {
             </div>
             {fieldDifferences.length > 0 && (
               <div className="cp-changes-list">
-                {fieldDifferences.map((diffItem, diffIndex) => (
+                {fieldDifferences.map((diffItem, diffIndex) => {
+                  const controls = getControlsForPath(diffItem.path)
+                  return (
                   <div key={diffIndex} className={`cp-change cp-change--${diffItem.type}`}>
                     <div className="cp-change-header">
                       <span className={`cp-change-badge cp-change-badge--${diffItem.type}`}>{diffItem.label}</span>
                       <code className="cp-change-path">{diffItem.path}</code>
+                      {/sku|tier|accesstier|replication|capacity|keysource|encryption/i.test(diffItem.path) && diffItem.oldValue !== undefined && diffItem.newValue !== undefined && (
+                        <CostDeltaBadge
+                          resourceType={currentLive?.type || ''}
+                          location={currentLive?.location || 'westus2'}
+                          fieldPath={diffItem.path}
+                          oldValue={diffItem.oldValue}
+                          newValue={diffItem.newValue}
+                        />
+                      )}
+                      {controls.length > 0 && (
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 'auto' }}>
+                          {controls.map((c, ci) => (
+                            <span key={ci} title={c.title} style={{
+                              fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 3,
+                              background: 'rgba(202,138,4,0.12)', color: '#ca8a04',
+                              border: '1px solid rgba(202,138,4,0.25)', whiteSpace: 'nowrap',
+                            }}>{c.fw}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="cp-change-values">
                       {diffItem.oldValue !== undefined && <ValueChip value={diffItem.oldValue} variant="old" />}
@@ -455,14 +498,15 @@ export default function ComparisonPage() {
                       {diffItem.newValue !== undefined && <ValueChip value={diffItem.newValue} variant="new" />}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
         )}
 
         {/* JSON panels */}
-        {!isLoadingBaseline && (baselineConfig || passedLive) && (
+        {!isLoadingBaseline && (baselineConfig || currentLive) && (
           <div className="cp-json-row">
             <div className="cp-json-panel">
               <div className="cp-json-panel-header">
@@ -471,8 +515,8 @@ export default function ComparisonPage() {
                   <h3>Golden Baseline</h3>
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="cp-toolbar-btn" onClick={expandAll}><span className="material-symbols-outlined">unfold_more</span></button>
-                  <button className="cp-toolbar-btn" onClick={collapseAll}><span className="material-symbols-outlined">unfold_less</span></button>
+                  <button className="cp-toolbar-btn" onClick={expandAll} aria-label="Expand all nodes"><span className="material-symbols-outlined">unfold_more</span></button>
+                  <button className="cp-toolbar-btn" onClick={collapseAll} aria-label="Collapse all nodes"><span className="material-symbols-outlined">unfold_less</span></button>
                   <span className="cp-arm-badge">ARM</span>
                 </div>
               </div>
@@ -489,7 +533,7 @@ export default function ComparisonPage() {
                 <span className="cp-arm-badge">ARM</span>
               </div>
               <div className="cp-json-body">
-                <JsonTree ref={liveTreeRef} data={normaliseState(passedLive)} />
+                <JsonTree ref={liveTreeRef} data={normaliseState(currentLive)} />
               </div>
             </div>
           </div>
@@ -498,31 +542,32 @@ export default function ComparisonPage() {
 
       {/* Feature 6: Schedule Remediation Modal */}
       {showScheduleModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="cp-card" style={{ width: 450, padding: 24, background: 'var(--panel-bg)', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }}>
-            <h3 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--primary)' }}>schedule</span> Schedule Remediation
-            </h3>
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 16 }}>
-              Select a maintenance window for auto-applying this fix. Set auto-approval if the admin doesn't respond within 24 hours. The drift severity will automatically escalate to Critical if it remains unresolved.
-            </p>
-            <div className="sp-form-field" style={{ marginBottom: 16 }}>
-              <label className="sp-form-label" style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, display: 'block' }}>Maintenance Window</label>
-              <input type="datetime-local" className="sp-input" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} style={{ width: '100%', padding: '8px', border: '1px solid var(--border-light)', borderRadius: 4, background: 'var(--bg-lighter)', color: 'var(--text-primary)' }} />
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 24, cursor: 'pointer' }}>
-              <input type="checkbox" defaultChecked /> Enable Auto-Approval after 24h
-            </label>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-              <button className="cp-btn cp-btn--secondary" onClick={() => setShowScheduleModal(false)}>Cancel</button>
-              <button className="cp-btn cp-btn--primary" onClick={() => {
-                 setRemediationSucceeded(true)
-                 setShowScheduleModal(false)
-              }} disabled={!scheduleTime}>Confirm Schedule</button>
-            </div>
-          </div>
-        </div>
+        <ScheduleRemediationModal
+          subscriptionId={subscriptionId}
+          resourceGroupId={resourceGroupId}
+          resourceId={resourceId}
+          severity={driftSeverity}
+          onClose={() => setShowScheduleModal(false)}
+          onScheduled={schedule => {
+            setScheduledConfirmation(schedule)
+            setRemediationSucceeded(true)
+          }}
+        />
       )}
     </div>
   )
 }
+// FILE: src/pages/ComparisonPage.jsx
+// ROLE: Shows baseline vs live ARM config side-by-side with field-level diff and remediation
+
+// What this page does:
+//   - On load: fetches the golden baseline blob and policy compliance in parallel
+//   - Strips volatile fields (etag, provisioningState) from both configs before diffing
+//   - Runs deepDiff(baseline, live) to get field-level changes
+//   - Classifies severity: Critical / High / Medium / Low
+//   - Calls Azure OpenAI (non-blocking) for plain-English explanation
+//   - Remediate button: Low = immediate ARM PUT, Medium/High/Critical = approval email
+//   - Upload Baseline: accepts raw ARM config or ARM template export (.json)
+
+// Receives data via React Router location.state (set by DashboardHome or DriftScanner)
+

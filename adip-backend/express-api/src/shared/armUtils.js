@@ -3,37 +3,52 @@
 // FILE: shared/armUtils.js
 // ROLE: Shared ARM PUT utilities — volatile field stripping for remediation
 
-// Used by: remediate.js, remediateDecision.js
-// Extracted to eliminate DRY violation (same constants + strip function in both files)
-
 // Fields ARM rejects on PUT because they are managed by ARM itself
-
 const VOLATILE_FIELDS = [
   'etag', 'changedTime', 'createdTime', 'provisioningState',
   'lastModifiedAt', 'systemData', '_ts', '_etag', '_rid', '_self', 'id',
 ]
 
-// Additional read-only fields specific to certain resource types
+// Read-only fields ARM rejects or ignores on PUT — resource-type specific
 const READONLY_FIELDS = [
-  // VM: runtime state fields
-  'instanceView', 'powerState', 'statuses', 'resources', 'latestModelApplied', 'vmId', 'timeCreated',
-  // NSG: system-managed rules and back-references
-  'defaultSecurityRules', 'resourceGuid', 'networkInterfaces', 'subnets',
+  // Common ARM
+  'resourceGuid',
+  // VM: system-assigned, immutable after creation
+  'vmId', 'timeCreated', 'instanceView', 'powerState', 'statuses',
+  'resources', 'latestModelApplied',
+  // VM osProfile: immutable after provisioning
+  'adminUsername', 'adminPassword', 'computerName',
+  // VM linuxConfiguration / windowsConfiguration: immutable after provisioning
+  'disablePasswordAuthentication', 'ssh', 'provisionVMAgent', 'patchSettings',
+  'enableAutomaticUpdates', 'winRM',
+  // VM storageProfile: disk identity is immutable
+  'diskSizeGB', 'createOption',
+  // VM networkProfile: NIC IDs are references, not settable via VM PUT
+  // NSG: system-managed back-references
+  'defaultSecurityRules', 'networkInterfaces', 'subnets',
 ]
+
 
 /**
  * Recursively strips volatile and read-only fields from an ARM resource object
  * before applying an ARM PUT. Without stripping, ARM returns 400 "Cannot parse the request".
  * @param {*} obj - Any value (object, array, primitive)
+ * @param {string} [parentKey] - Parent key name for context-aware stripping
  * @returns Cleaned copy safe for ARM PUT
  */
-function stripVolatileFields(obj) {
-  if (Array.isArray(obj)) return obj.map(stripVolatileFields)
+function stripVolatileFields(obj, parentKey = '') {
+  if (Array.isArray(obj)) return obj.map(item => stripVolatileFields(item, parentKey))
   if (obj && typeof obj === 'object') {
     return Object.fromEntries(
       Object.entries(obj)
-        .filter(([fieldName]) => !VOLATILE_FIELDS.includes(fieldName) && !READONLY_FIELDS.includes(fieldName))
-        .map(([fieldName, fieldValue]) => [fieldName, stripVolatileFields(fieldValue)])
+        .filter(([fieldName]) => {
+          if (VOLATILE_FIELDS.includes(fieldName)) return false
+          if (READONLY_FIELDS.includes(fieldName)) return false
+          // Strip nested osDisk identity fields
+          if (parentKey === 'osDisk' && ['name', 'managedDisk'].includes(fieldName)) return false
+          return true
+        })
+        .map(([fieldName, fieldValue]) => [fieldName, stripVolatileFields(fieldValue, fieldName)])
     )
   }
   return obj

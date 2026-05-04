@@ -19,6 +19,13 @@
 // Called by: drift.js, baseline.js, genome.js, compare.js, queuePoller.js, app.js
 
 'use strict'
+
+// Returns true only for real human/SPN callers — filters out System, blank, and automated entries
+function isHumanCaller(caller) {
+  if (!caller || !caller.trim()) return false
+  const c = caller.trim().toLowerCase()
+  return c !== 'system' && c !== 'manual-compare' && !c.startsWith('azure ')
+}
 const { BlobServiceClient } = require('@azure/storage-blob')
 const { TableClient } = require('@azure/data-tables')
 
@@ -128,6 +135,7 @@ async function saveDriftRecord(record) {
     resourceId:   record.resourceId   || '',
     resourceGroup:record.resourceGroup|| '',
     severity:     record.severity     || '',
+    caller:       record.caller       || '',
     detectedAt:   record.detectedAt   || new Date().toISOString(),
     changeCount:  record.changeCount  || 0,
   }, 'Replace').catch(() => {})
@@ -212,13 +220,20 @@ async function listGenomeSnapshots(subscriptionId, resourceId, limit = 50) {
   let filter = `PartitionKey eq '${subscriptionId}'`
   if (resourceId) filter += ` and resourceId eq '${resourceId}'`
 
-  const results = []
+  const entities = []
   for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
-    if (results.length >= limit) break
-    const doc = await readBlob('baseline-genome', entity.blobKey)
-    if (doc) results.push({ ...doc, _blobKey: entity.blobKey, rolledBackAt: entity.rolledBackAt || null, isCurrentBaseline: entity.isCurrentBaseline || false })
+    if (entities.length >= limit) break
+    entities.push(entity)
   }
-  return results.sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
+
+  const docs = await Promise.all(
+    entities.map(entity =>
+      readBlob('baseline-genome', entity.blobKey)
+        .then(doc => doc ? { ...doc, _blobKey: entity.blobKey, rolledBackAt: entity.rolledBackAt || null, isCurrentBaseline: entity.isCurrentBaseline || false } : null)
+        .catch(() => null)
+    )
+  )
+  return docs.filter(Boolean).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
 }
 // ── listGenomeSnapshots END ───────────────────────────────────────────────────
 
@@ -290,7 +305,8 @@ async function saveChangeRecord(record) {
   // Write permanent blob
   await writeBlob('all-changes', key, { ...record, _blobKey: key })
 
-  // Write index entry for fast counting
+  // Write index entry for fast counting — only for human/SPN callers
+  if (!isHumanCaller(record.caller)) return
   const rk = Buffer.from(key).toString('base64url').slice(0, 512)
   tableClient('changesIndex')?.upsertEntity({
     partitionKey:  record.subscriptionId || 'unknown',
@@ -335,6 +351,7 @@ async function getRecentChanges({ subscriptionId, resourceGroup, caller, changeT
   for await (const entity of tc.listEntities({ queryOptions: { filter } })) {
     if (results.length >= limit) break
     if (caller && entity.caller !== caller) continue
+    if (!isHumanCaller(entity.caller)) continue  // skip System/blank entries
     // Return index fields directly — no blob read needed for the dashboard table
     results.push({
       subscriptionId,
@@ -397,4 +414,5 @@ module.exports = {
   getMonitorSessionsTableClient,
   getDriftIndexTableClient,
   getChangesIndexTableClient,
+  readBlob,
 }

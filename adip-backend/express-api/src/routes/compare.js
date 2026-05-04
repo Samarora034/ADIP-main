@@ -5,7 +5,47 @@ const { classifySeverity } = require('../shared/severity')
 const { getResourceConfig } = require('../services/azureResourceService')
 const { getBaseline, saveDriftRecord } = require('../services/blobService')
 const { broadcastDriftEvent } = require('../services/socketService')
-const { explainDrift, reclassifySeverity } = require('../services/aiService')
+const { explainDrift } = require('../services/aiService')
+const { TableClient } = require('@azure/data-tables')
+const { mapDiffToControls } = require('../shared/complianceMap')
+
+// Loads active suppression rules for a subscription from Table Storage
+async function loadSuppressionRules(subscriptionId) {
+  try {
+    const tc = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, 'suppressionRules')
+    const rules = []
+    for await (const entity of tc.listEntities({ queryOptions: { filter: `PartitionKey eq '${subscriptionId}'` } })) {
+      rules.push({
+        fieldPath:       entity.fieldPath,
+        resourceGroupId: entity.resourceGroupId || '',
+        resourceId:      entity.resourceId      || '',
+        changeTypes:     entity.changeTypes ? entity.changeTypes.split(',').filter(Boolean) : [],
+      })
+    }
+    return rules
+  } catch {
+    return []
+  }
+}
+
+// Returns true if a diff change should be suppressed based on active rules
+function isSuppressed(change, rules, resourceId, resourceGroupId) {
+  // Normalize path: diff engine uses " → " as separator, rules use "." — unify to "."
+  const norm = p => (p || '').toLowerCase().replace(/ → /g, '.')
+  const changePath = norm(change.path)
+  const changeType = (change.type || 'modified').toLowerCase()
+
+  return rules.some(rule => {
+    const ruleField = norm(rule.fieldPath)
+    const rgMatch  = !rule.resourceGroupId || (resourceGroupId || '').toLowerCase().includes(rule.resourceGroupId.toLowerCase())
+    const resMatch = !rule.resourceId      || (resourceId      || '').toLowerCase() === rule.resourceId.toLowerCase()
+    if (!rgMatch || !resMatch) return false
+    const typeMatch = !rule.changeTypes.length || rule.changeTypes.includes(changeType) || rule.changeTypes.includes('all')
+    // Exact match OR changePath is a child field of ruleField
+    const pathMatch = changePath === ruleField || changePath.startsWith(ruleField + '.')
+    return pathMatch && typeMatch
+  })
+}
 
 // getMonitorSessionsTableClient imported above from blobService — infrastructure stays in the service layer
 
@@ -18,7 +58,7 @@ function buildSessionRowKey(subscriptionId, resourceGroupId, resourceId) {
 
 // ── runDriftCheck START ──────────────────────────────────────────────────────
 // Full drift check pipeline: fetches live + baseline, diffs, classifies, runs AI, saves record, alerts
-async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
+async function runDriftCheck(subscriptionId, resourceGroupId, resourceId, caller = '', persist = false) {
   console.log('[runDriftCheck] starts — subscriptionId:', subscriptionId, 'rg:', resourceGroupId, 'resourceId:', resourceId)
   if (!subscriptionId || !resourceGroupId) throw new Error('runDriftCheck requires subscriptionId and resourceGroupId')
   const [currentLiveConfig, storedBaseline] = await Promise.all([
@@ -26,8 +66,11 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
     getBaseline(subscriptionId, resourceId || resourceGroupId),
   ])
 
-  const detectedChanges = storedBaseline?.resourceState ? diffObjects(storedBaseline.resourceState, currentLiveConfig) : []
-  const driftSeverity   = classifySeverity(detectedChanges)
+  const rawChanges       = storedBaseline?.resourceState ? diffObjects(storedBaseline.resourceState, currentLiveConfig) : []
+  const suppressionRules = await loadSuppressionRules(subscriptionId)
+  const resourceType     = currentLiveConfig?.type || ''
+  const detectedChanges  = rawChanges.filter(c => !isSuppressed(c, suppressionRules, resourceId, resourceGroupId))
+  const driftSeverity    = classifySeverity(detectedChanges)
   const driftRecord = {
     subscriptionId, resourceGroupId,
     resourceId:    resourceId || null,
@@ -37,28 +80,19 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
     differences:   detectedChanges,
     severity:      driftSeverity,
     changeCount:   detectedChanges.length,
-    caller:        'manual-compare',
+    caller:        caller || '',
     detectedAt:    new Date().toISOString(),
   }
 
   if (detectedChanges.length > 0) {
-    // Run AI explanation and severity re-classification in parallel (non-blocking)
-    const [aiExplanationResult, aiSeverityResult] = await Promise.allSettled([
-      explainDrift(driftRecord), reclassifySeverity(driftRecord),
-    ]).then(results => results.map(result => result.value ?? null))
-
+    // Run AI explanation only (severity stays rule-based, no AI escalation)
+    const aiExplanationResult = await explainDrift(driftRecord).catch(() => null)
     if (aiExplanationResult) driftRecord.aiExplanation = aiExplanationResult
-    if (aiSeverityResult) {
-      driftRecord.aiSeverity  = aiSeverityResult.severity
-      driftRecord.aiReasoning = aiSeverityResult.reasoning
-      // AI can only escalate severity, never reduce it
-      const severityOrder = ['none', 'low', 'medium', 'high', 'critical']
-      if (severityOrder.indexOf(aiSeverityResult.severity) > severityOrder.indexOf(driftRecord.severity)) {
-        driftRecord.severity = aiSeverityResult.severity
-      }
+    // Only persist to driftIndex when called from a real event (not manual compare/live refresh)
+    if (persist) {
+      await saveDriftRecord(driftRecord)
+      broadcastDriftEvent(driftRecord)
     }
-    await saveDriftRecord(driftRecord)
-    broadcastDriftEvent(driftRecord)
   }
   console.log('[runDriftCheck] ends — severity:', driftRecord.severity, 'changes:', detectedChanges.length)
   return driftRecord
@@ -67,9 +101,9 @@ async function runDriftCheck(subscriptionId, resourceGroupId, resourceId) {
 
 router.post('/compare', async (req, res) => {
   console.log('[POST /compare] starts')
-  const { subscriptionId, resourceGroupId, resourceId } = req.body
+  const { subscriptionId, resourceGroupId, resourceId, caller } = req.body
   if (!subscriptionId || !resourceGroupId) return res.status(400).json({ error: 'subscriptionId and resourceGroupId required' })
-  try { res.json(await runDriftCheck(subscriptionId, resourceGroupId, resourceId || null)) }
+  try { res.json(await runDriftCheck(subscriptionId, resourceGroupId, resourceId || null, caller || '')) }
   catch (compareError) { res.status(500).json({ error: compareError.message }) }
 })
 router.post('/monitor/start', async (req, res) => {
@@ -103,6 +137,18 @@ router.post('/monitor/stop', async (req, res) => {
     }, 'Merge')
     res.json({ monitoring: false, key: sessionTableRowKey })
   } catch (stopError) { res.status(500).json({ error: stopError.message }) }
+})
+
+
+// POST /api/compliance-impact
+// Body: { differences: [...] } — maps diff to violated compliance controls
+router.post('/compliance-impact', (req, res) => {
+  console.log('[POST /compliance-impact] starts')
+  const { differences } = req.body
+  if (!Array.isArray(differences)) return res.status(400).json({ error: 'differences array required' })
+  const controls = mapDiffToControls(differences)
+  res.json(controls)
+  console.log('[POST /compliance-impact] ends — controls:', controls.length)
 })
 
 module.exports = router

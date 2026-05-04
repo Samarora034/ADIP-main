@@ -24,7 +24,9 @@
   width: 240px;
   flex-shrink: 0;
   position: sticky;
-  top: 104px;
+  top: 80px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -216,7 +218,7 @@
 }
 .sp-profile-role {
   font-size: 13px;
-  color: #94a3b8;
+  color: #4b5563;
   font-weight: 500;
 }
 
@@ -259,7 +261,7 @@
   background: #fff;
 }
 .sp-input::placeholder {
-  color: #94a3b8;
+  color: #9ca3af;
 }
 
 .sp-inline-success {
@@ -320,7 +322,7 @@
 
 .sp-setting-icon {
   font-size: 20px;
-  color: #94a3b8;
+  color: #6b7280;
   margin-top: 1px;
   flex-shrink: 0;
 }
@@ -334,7 +336,7 @@
 
 .sp-setting-desc {
   font-size: 12px;
-  color: #94a3b8;
+  color: #6b7280;
   line-height: 1.4;
 }
 
@@ -356,7 +358,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94a3b8;
+  color: #6b7280;
   padding: 12px 0 4px;
 }
 
@@ -550,7 +552,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94a3b8;
+  color: #6b7280;
 }
 .sp-about-value {
   font-size: 14px;
@@ -566,7 +568,7 @@
 }
 .sp-about-credit {
   font-size: 13px;
-  color: #94a3b8;
+  color: #6b7280;
 }
 .sp-about-credit strong {
   color: #003359;
@@ -615,3 +617,6 @@
     grid-template-columns: 1fr;
   }
 }
+
+.sp-save-btn--dirty { background: #f59e0b; }
+.sp-save-btn--dirty:hover { background: #d97706; }
