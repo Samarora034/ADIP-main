@@ -149,10 +149,13 @@ export default function DriftScanner() {
   const handleSubmit = () => {
     // Sync first scope to context for backward compatibility with other pages
     const primary = scopes[0]
-    if (primary?.subscriptionId) setSubscription(primary.subscriptionId)
-    if (primary?.resourceGroupId) setResourceGroup(primary.resourceGroupId)
-    if (primary?.resourceId !== undefined) setResource(primary.resourceId)
-    if (!subscription || !resourceGroup || isScanning) return
+    const sub = primary?.subscriptionId || ''
+    const rg  = primary?.resourceGroupId || ''
+    const res = primary?.resourceId || ''
+    if (sub) setSubscription(sub)
+    if (rg)  setResourceGroup(rg)
+    if (primary?.resourceId !== undefined) setResource(res)
+    if (!sub || !rg || isScanning) return
 
     // Reset all state before starting a new scan
     setIsScanning(true)
@@ -164,7 +167,7 @@ export default function DriftScanner() {
     // Start the ARM config fetch in parallel with the animation
     const armConfigFetchPromise = isDemoMode
       ? new Promise(resolve => setTimeout(() => resolve(getDemoConfigForSelectedScope()), LIVE_EVENTS_TEMPLATE.length * 200))
-      : fetchResourceConfiguration(subscription, resourceGroup, resource || null)
+      : fetchResourceConfiguration(sub, rg, res || null)
 
     // Play through animation steps one by one, then resolve the config fetch
     let animationStepIndex = 0
